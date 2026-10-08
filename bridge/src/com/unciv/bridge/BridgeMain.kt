@@ -17,7 +17,7 @@ import java.io.File
  * or simply `gradlew :bridge:run` from the repository root.
  */
 object BridgeMain {
-    const val PROTOCOL_VERSION = 2
+    const val PROTOCOL_VERSION = 6
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -50,6 +50,9 @@ object BridgeMain {
         game.settings = GameSettings().apply {
             showTutorials = false
             turnsBetweenAutosaves = 10000
+            // Exploring / automated units and multi-turn moves act when you end your turn (see GameSession.endTurn),
+            // not at the start of it - Unciv's "Move automated units" step, done for you.
+            automatedUnitsMoveOnTurnStart = false
         }
         val startMs = System.currentTimeMillis()
         RulesetCache.loadRulesets(consoleMode = true, noMods = true)

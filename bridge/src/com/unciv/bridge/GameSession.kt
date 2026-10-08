@@ -4,6 +4,7 @@ import com.unciv.Constants
 import com.unciv.UncivGame
 import com.unciv.logic.GameInfo
 import com.unciv.logic.GameStarter
+import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.files.UncivFiles
@@ -17,8 +18,13 @@ import com.unciv.models.UnitActionType
 import com.unciv.models.metadata.BaseRuleset
 import com.unciv.models.metadata.GameSetupInfo
 import com.unciv.models.metadata.Player
+import com.unciv.models.ruleset.Building
+import com.unciv.models.ruleset.IConstruction
+import com.unciv.models.ruleset.INonPerpetualConstruction
+import com.unciv.models.ruleset.PerpetualConstruction
 import com.unciv.models.ruleset.RulesetCache
 import com.unciv.models.ruleset.tile.TileImprovement
+import com.unciv.models.stats.Stat
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
 import com.unciv.view.AttackableTileView
 import com.unciv.view.GameView
@@ -52,9 +58,18 @@ class GameSession {
         "getRuleset" -> StateWriter.ruleset(game())
         "getUnit" -> getUnit(params)
         "moveUnit" -> moveUnit(params)
+        "previewMove" -> previewMove(params)
         "unitAction" -> unitAction(params)
         "attack" -> attack(params)
         "buildImprovement" -> buildImprovement(params)
+        "getCity" -> getCity(params)
+        "setProduction" -> setProduction(params)
+        "removeFromQueue" -> removeFromQueue(params)
+        "buyConstruction" -> buyConstruction(params)
+        "getTechs" -> StateWriter.techs(viewer())
+        "setResearch" -> setResearch(params)
+        "promote" -> promote(params)
+        "setSettings" -> setSettings(params)
         "endTurn" -> endTurn()
         else -> throw BridgeException("Unknown method '$method'")
     }
@@ -80,6 +95,16 @@ class GameSession {
         val id = params.requireInt("unitId")
         return viewer().units.getCivUnits().firstOrNull { it.id == id }
             ?: throw BridgeException("You have no unit with id $id")
+    }
+
+    /** One of your cities, by "name" or by its centre tile "x", "y". */
+    private fun findOwnCity(params: JsonObject): City {
+        val name = params.str("name")
+        val x = params.int("x")
+        val y = params.int("y")
+        return viewer().cities.firstOrNull {
+            (name != null && it.name == name) || (x != null && y != null && it.location == HexCoord(x, y))
+        } ?: throw BridgeException("You have no city ${name ?: "at ($x, $y)"}")
     }
 
     // endregion
@@ -185,7 +210,9 @@ class GameSession {
         val improvements = buildableImprovements(unit).map {
             it to if (it.name == Constants.cancelImprovementOrder) 0 else it.getTurnsToBuild(unit.civ, unit)
         }
-        return StateWriter.unitDetails(unitView, safeUnitActions(unit), attackTargets(unitView), improvements)
+        val promotionChoices = if (canPromoteNow(unit)) unit.promotions.getAvailablePromotions().toList() else emptyList()
+        return StateWriter.unitDetails(unitView, safeUnitActions(unit), attackTargets(unitView), improvements,
+            canPromoteNow(unit), promotionChoices)
     }
 
     /** Everything [unitView] could attack this turn (moving first if needed), as Unciv's own UI computes it. */
@@ -289,18 +316,52 @@ class GameSession {
             throw BridgeException("${unit.displayName()} can't reach that tile")
         }
 
-        val previousTile = unitView.getTile()
+        val previousPosition = unit.getTile().position
         unitView.tryMoveToTile(tileToMoveTo)
-        val moved = previousTile != unitView.getTile()
-        if (moved) {
-            if (unitView.isExploring() || unitView.isMoving()) unitView.tryResetAction()
-            if (unitView.getTile() != targetTileView) unitView.trySetMoveToAction(targetTileView)
+        val moved = unit.getTile().position != previousPosition
+        if (moved && (unitView.isExploring() || unitView.isMoving())) unitView.tryResetAction()
+        // Not there yet (a far target, or no moves left this turn): keep heading there on later turns
+        val queued = unit.getTile().position != target
+        if (queued) {
+            if (!moved && unitView.isExploring()) unitView.tryResetAction()
+            unitView.trySetMoveToAction(targetTileView)
         }
         return buildJsonObject {
             put("moved", moved)
+            put("queued", queued)
             put("x", unit.getTile().position.x)
             put("y", unit.getTile().position.y)
             put("movementLeft", unit.currentMovement)
+        }
+    }
+
+    /**
+     * params: unitId, x, y. Where a move there would take the unit, without moving it - like the path and
+     * turn count Unciv shows before you press "Move here". stops[i] is where the unit ends turn i + 1.
+     */
+    private fun previewMove(params: JsonObject): JsonElement {
+        val game = game()
+        val unit = findOwnUnit(params)
+        val target = HexCoord(params.requireInt("x"), params.requireInt("y"))
+        if (target !in game.tileMap) throw BridgeException("($target) is off the map")
+        val gameView = GameView(game, viewer())
+        val unitView = gameView.getMapUnitView(unit)
+        val targetTileView = gameView.getTile(game.tileMap[target])
+        val path = if (unit.getTile().position == target) emptyList() else try {
+            unitView.getShortestPath(targetTileView)
+        } catch (ex: Exception) {
+            System.err.println("Couldn't find a path: $ex")
+            emptyList()
+        }
+        return buildJsonObject {
+            put("canReach", path.isNotEmpty())
+            put("turns", path.size)
+            putJsonArray("stops") {
+                for (tile in path) addJsonObject {
+                    put("x", tile.position().x)
+                    put("y", tile.position().y)
+                }
+            }
         }
     }
 
@@ -333,6 +394,113 @@ class GameSession {
         }
     }
 
+    /**
+     * params (all optional): automatedUnitsMoveOnTurnStart - true: your automated / exploring units move at
+     * the start of your turn (Unciv's own option); false (default): they move when you end your turn.
+     */
+    private fun setSettings(params: JsonObject): JsonElement {
+        val settings = UncivGame.Current.settings
+        params.bool("automatedUnitsMoveOnTurnStart")?.let { settings.automatedUnitsMoveOnTurnStart = it }
+        return buildJsonObject {
+            put("automatedUnitsMoveOnTurnStart", settings.automatedUnitsMoveOnTurnStart)
+        }
+    }
+
+    /** Same rule as Unciv's promotion screen: enough XP, and the unit hasn't moved away its turn or attacked. */
+    private fun canPromoteNow(unit: MapUnit): Boolean =
+        unit.promotions.canBePromoted() && unit.hasMovement() && unit.attacksThisTurn == 0
+
+    /** params: unitId, promotion - a name from getUnit().promotionChoices. */
+    private fun promote(params: JsonObject): JsonElement {
+        val unit = findOwnUnit(params)
+        val name = params.requireStr("promotion")
+        if (!canPromoteNow(unit)) throw BridgeException("${unit.displayName()} can't be promoted right now")
+        if (unit.promotions.getAvailablePromotions().none { it.name == name })
+            throw BridgeException("$name isn't available to ${unit.displayName()}")
+        val gameView = GameView(game(), viewer())
+        gameView.getMapUnitView(unit).tryAddPromotion(name)
+        return getUnit(params)
+    }
+
+    /** params: name or x, y. Production, growth, queue and everything the city can build. */
+    private fun getCity(params: JsonObject): JsonElement {
+        val city = findOwnCity(params)
+        val cityView = GameView(game(), viewer()).getCityView(city)
+        return StateWriter.cityDetails(cityView)
+    }
+
+    /**
+     * params: name or x, y; construction; mode "now" (default: build it next, ahead of the queue)
+     * or "queue" (add to the end). Same rules as Unciv's city screen.
+     */
+    private fun setProduction(params: JsonObject): JsonElement {
+        val city = findOwnCity(params)
+        val cityView = GameView(game(), viewer()).getCityView(city)
+        val name = params.requireStr("construction")
+        val ruleset = city.getRuleset()
+        val construction: IConstruction = ruleset.units[name] ?: ruleset.buildings[name]
+            ?: PerpetualConstruction.perpetualConstructionsMap[name]
+            ?: throw BridgeException("Unknown construction '$name'")
+        val constructions = cityView.constructions
+        if (cityView.isPuppet()) throw BridgeException("${city.name} is a puppet - you can't choose its production")
+        if (!constructions.isBuildable(construction)) throw BridgeException("${city.name} can't build $name")
+        if (construction is Building && construction.hasCreateOneImprovementUnique())
+            throw BridgeException("$name needs a target tile, which the bridge doesn't support yet")
+        if (!constructions.canAddToQueue(construction)) throw BridgeException("$name can't be added (is the queue full?)")
+        val now = (params.str("mode") ?: "now") == "now"
+        cityView.tryAddToQueueConstruction(construction, addToTop = now)
+        if (constructions.currentConstructionName() == name) cityView.tryReassignPopulation()
+        return StateWriter.cityDetails(cityView)
+    }
+
+    /** params: name or x, y; index into the queue (0 = what's being built now). */
+    private fun removeFromQueue(params: JsonObject): JsonElement {
+        val city = findOwnCity(params)
+        val cityView = GameView(game(), viewer()).getCityView(city)
+        val index = params.requireInt("index")
+        if (index !in cityView.constructions.constructionQueue.indices) throw BridgeException("No queue entry $index")
+        cityView.tryRemoveFromQueue(index, false)
+        return StateWriter.cityDetails(cityView)
+    }
+
+    /** params: name or x, y; construction. Buys it with gold right now. */
+    private fun buyConstruction(params: JsonObject): JsonElement {
+        val city = findOwnCity(params)
+        val cityView = GameView(game(), viewer()).getCityView(city)
+        val name = params.requireStr("construction")
+        val ruleset = city.getRuleset()
+        val construction: INonPerpetualConstruction = ruleset.units[name] ?: ruleset.buildings[name]
+            ?: throw BridgeException("Can't buy '$name'")
+        val constructions = cityView.constructions
+        val cost = constructions.getStatBuyCost(construction, Stat.Gold)
+            ?: throw BridgeException("$name can't be bought with gold")
+        if (!constructions.isConstructionPurchaseAllowed(construction, Stat.Gold, cost))
+            throw BridgeException("Can't buy $name for $cost gold (not enough gold, or not allowed here)")
+        if (!constructions.purchaseConstruction(construction, -1, Stat.Gold, null))
+            throw BridgeException("Buying $name failed")
+        return StateWriter.cityDetails(cityView)
+    }
+
+    /**
+     * params: tech. Researches it, along with any missing prerequisites first, like clicking a tech in
+     * Unciv's tech tree. When you have a free tech to pick (e.g. from a wonder), it's granted instead.
+     */
+    private fun setResearch(params: JsonObject): JsonElement {
+        val civ = viewer()
+        val name = params.requireStr("tech")
+        val tech = civ.gameInfo.ruleset.technologies[name] ?: throw BridgeException("Unknown tech '$name'")
+        val techs = civ.tech
+        if (techs.freeTechs > 0 && techs.canBeResearched(name)) {
+            techs.getFreeTechnology(name)
+        } else {
+            val path = techs.getRequiredTechsToDestination(tech)
+            if (path.isEmpty()) throw BridgeException("$name is already researched or can't be researched")
+            techs.techsToResearch = ArrayList(path.map { it.name })
+        }
+        techs.updateResearchProgress()
+        return StateWriter.techs(civ)
+    }
+
     /** Lists every action Unciv offers for [unit], stopping quietly at the first one that needs the Unciv UI. */
     private fun safeUnitActions(unit: MapUnit): List<UnitAction> {
         val result = ArrayList<UnitAction>()
@@ -347,6 +515,13 @@ class GameSession {
     private fun endTurn(): JsonElement {
         val game = game()
         val player = viewer()
+        // Unciv's "Move automated units" step: explorers, automated workers and units on multi-turn
+        // moves act now, as your turn ends, before the AI players move.
+        if (!player.hasMovedAutomatedUnits) {
+            val civView = GameView(game, player).civView
+            civView.tryMarkMovedAutomatedUnits()
+            civView.tryAutomateAllUnits()
+        }
         game.nextTurn()
         val next = viewer()
         return buildJsonObject {

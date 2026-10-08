@@ -4,8 +4,15 @@ import com.unciv.logic.GameInfo
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.HexMath
 import com.unciv.models.UnitAction
+import com.unciv.models.ruleset.Building
+import com.unciv.models.ruleset.INonPerpetualConstruction
+import com.unciv.models.ruleset.PerpetualConstruction
+import com.unciv.models.stats.Stat
+import com.unciv.models.stats.Stats
 import com.unciv.models.ruleset.tile.TileImprovement
+import com.unciv.models.ruleset.unit.Promotion
 import com.unciv.view.AttackableTileView
+import com.unciv.view.CityView
 import com.unciv.view.ForeignMapUnitView
 import com.unciv.view.GameView
 import com.unciv.view.MapUnitView
@@ -57,6 +64,8 @@ object StateWriter {
                 put("faith", stats.faith)
                 put("happiness", civView.getHappiness())
                 put("currentTech", civView.currentTechnologyName())
+                put("canResearch", civView.canResearchTech())
+                put("freeTechs", viewer.tech.freeTechs)
             }
 
             putJsonArray("civs") {
@@ -97,6 +106,7 @@ object StateWriter {
                         put("health", city.getHealth())
                         put("maxHealth", city.getMaxHealth())
                         put("producing", city.currentConstructionName())
+                        put("producingTurns", safeTurns(city, city.currentConstructionName(), true))
                         put("turnsToGrowth", city.getNumTurnsToNewPopulation())
                     }
                 }
@@ -185,8 +195,23 @@ object StateWriter {
         actions: List<UnitAction>,
         targets: List<AttackableTileView>,
         improvements: List<Pair<TileImprovement, Int>>,
+        canPromote: Boolean,
+        promotionChoices: List<Promotion>,
     ): JsonObject = buildJsonObject {
         writeOwnUnit(unit)
+        put("xp", unit.xp)
+        put("xpForNextPromotion", unit.xpForNextPromotion())
+        put("canPromote", canPromote)
+        putJsonArray("promotions") { unit.getPromotions().forEach { add(it.name) } }
+        val forThisType = unit.getAvailablePromotions().map { it.promotion }
+        putJsonArray("promotionChoices") {
+            for (promotion in promotionChoices) {
+                addJsonObject {
+                    put("name", promotion.name)
+                    put("description", try { promotion.getDescription(forThisType) } catch (_: Exception) { promotion.uniques.joinToString("\n") })
+                }
+            }
+        }
         val attacker = unit.asCombatant()
         putJsonArray("targets") {
             for (target in targets) {
@@ -245,6 +270,116 @@ object StateWriter {
                     put("title", action.title)
                     put("enabled", action.action != null)
                     put("current", action.isCurrentAction)
+                }
+            }
+        }
+    }
+
+    /** Turns until [name] is done in [city], or -1 when that isn't a meaningful number (e.g. "Produce Gold"). */
+    private fun safeTurns(city: CityView, name: String, useStoredProduction: Boolean): Int {
+        if (PerpetualConstruction.isNamePerpetual(name)) return -1
+        return try {
+            city.constructions.turnsToConstruction(name, useStoredProduction)
+        } catch (_: Exception) {
+            -1
+        }
+    }
+
+    private fun JsonObjectBuilder.writeStats(key: String, stats: Stats) {
+        putJsonObject(key) {
+            put("food", stats.food)
+            put("production", stats.production)
+            put("gold", stats.gold)
+            put("science", stats.science)
+            put("culture", stats.culture)
+            put("faith", stats.faith)
+        }
+    }
+
+    /** A city's growth, yields, queue and everything it could build - what Unciv's city screen shows. */
+    fun cityDetails(city: CityView): JsonObject = buildJsonObject {
+        city.updateTileStats()
+        val constructions = city.constructions
+        put("name", city.name)
+        put("x", city.location.x)
+        put("y", city.location.y)
+        put("population", city.getPopulationCount())
+        put("foodStored", city.getFoodStored())
+        put("foodToGrow", city.getFoodToNextPopulation())
+        put("turnsToGrowth", city.getNumTurnsToNewPopulation())
+        put("turnsToStarvation", city.getNumTurnsToStarvation())
+        put("health", city.getHealth())
+        put("maxHealth", city.getMaxHealth())
+        put("isCapital", city.isCapital())
+        put("isPuppet", city.isPuppet())
+        writeStats("yields", city.getCurrentCityStats())
+        putJsonArray("queue") {
+            for ((index, name) in constructions.constructionQueue.withIndex()) {
+                addJsonObject {
+                    put("index", index)
+                    put("name", name)
+                    put("turns", safeTurns(city, name, true))
+                }
+            }
+        }
+        putJsonArray("buildings") { city.getBuiltBuildings().forEach { add(it.name) } }
+
+        val ruleset = city.getRuleset()
+        putJsonArray("options") {
+            for (construction in ruleset.units.values.asSequence() + ruleset.buildings.values.asSequence()) {
+                if (!constructions.shouldBeDisplayed(construction)) continue
+                val nonPerpetual = construction as INonPerpetualConstruction
+                addJsonObject {
+                    put("name", construction.name)
+                    put("kind", when {
+                        construction is Building && construction.isAnyWonder() -> "wonder"
+                        construction is Building -> "building"
+                        else -> "unit"
+                    })
+                    val useStored = construction is Building || !constructions.isBeingConstructedOrEnqueued(construction.name)
+                    put("turns", safeTurns(city, construction.name, useStored))
+                    put("cost", city.getConstructionProductionCost(nonPerpetual))
+                    put("buildable", constructions.isBuildable(construction))
+                    val goldCost = try { constructions.getStatBuyCost(nonPerpetual, Stat.Gold) } catch (_: Exception) { null }
+                    if (goldCost != null) {
+                        put("goldCost", goldCost)
+                        put("canBuy", constructions.isConstructionPurchaseAllowed(nonPerpetual, Stat.Gold, goldCost))
+                    }
+                }
+            }
+            for (perpetual in PerpetualConstruction.perpetualConstructionsMap.values) {
+                if (!constructions.shouldBeDisplayed(perpetual)) continue
+                addJsonObject {
+                    put("name", perpetual.name)
+                    put("kind", "perpetual")
+                    put("turns", -1)
+                    put("buildable", constructions.isBuildable(perpetual))
+                }
+            }
+        }
+    }
+
+    /** The whole tech tree from [civ]'s point of view, plus what's being researched. */
+    fun techs(civ: Civilization): JsonObject = buildJsonObject {
+        val techs = civ.tech
+        put("current", techs.currentTechnologyName())
+        put("freeTechs", techs.freeTechs)
+        put("sciencePerTurn", civ.stats.statsForNextTurn.science)
+        putJsonArray("queue") { techs.techsToResearch.forEach { add(it) } }
+        putJsonArray("techs") {
+            for (tech in civ.gameInfo.ruleset.technologies.values) {
+                addJsonObject {
+                    put("name", tech.name)
+                    put("era", tech.era())
+                    put("column", tech.column?.columnNumber ?: 0)
+                    put("row", tech.row)
+                    put("cost", techs.costOfTech(tech.name))
+                    put("progress", techs.researchOfTech(tech.name))
+                    put("researched", techs.isResearched(tech.name))
+                    put("researchable", techs.canBeResearched(tech.name))
+                    put("queueIndex", techs.techsToResearch.indexOf(tech.name))
+                    if (!techs.isResearched(tech.name)) put("turns", techs.turnsToTech(tech.name))
+                    putJsonArray("prerequisites") { tech.prerequisites.forEach { add(it) } }
                 }
             }
         }

@@ -58,6 +58,7 @@ def main():
     if warrior:
         details = b.call("getUnit", unitId=warrior["id"])
         target = details["reachable"][-1]
+        print("preview move:", b.call("previewMove", unitId=warrior["id"], x=target["x"], y=target["y"]))
         print("move warrior:", b.call("moveUnit", unitId=warrior["id"], x=target["x"], y=target["y"]))
 
     for _ in range(5):
