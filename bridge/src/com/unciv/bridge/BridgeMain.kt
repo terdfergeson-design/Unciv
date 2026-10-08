@@ -17,7 +17,7 @@ import java.io.File
  * or simply `gradlew :bridge:run` from the repository root.
  */
 object BridgeMain {
-    const val PROTOCOL_VERSION = 1
+    const val PROTOCOL_VERSION = 2
 
     @JvmStatic
     fun main(args: Array<String>) {

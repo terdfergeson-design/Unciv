@@ -1,5 +1,6 @@
 package com.unciv.bridge
 
+import com.unciv.Constants
 import com.unciv.UncivGame
 import com.unciv.logic.GameInfo
 import com.unciv.logic.GameStarter
@@ -17,8 +18,11 @@ import com.unciv.models.metadata.BaseRuleset
 import com.unciv.models.metadata.GameSetupInfo
 import com.unciv.models.metadata.Player
 import com.unciv.models.ruleset.RulesetCache
+import com.unciv.models.ruleset.tile.TileImprovement
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
+import com.unciv.view.AttackableTileView
 import com.unciv.view.GameView
+import com.unciv.view.MapUnitView
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -49,6 +53,8 @@ class GameSession {
         "getUnit" -> getUnit(params)
         "moveUnit" -> moveUnit(params)
         "unitAction" -> unitAction(params)
+        "attack" -> attack(params)
+        "buildImprovement" -> buildImprovement(params)
         "endTurn" -> endTurn()
         else -> throw BridgeException("Unknown method '$method'")
     }
@@ -175,7 +181,93 @@ class GameSession {
     private fun getUnit(params: JsonObject): JsonElement {
         val unit = findOwnUnit(params)
         val gameView = GameView(game(), viewer())
-        return StateWriter.unitDetails(gameView.getMapUnitView(unit), safeUnitActions(unit))
+        val unitView = gameView.getMapUnitView(unit)
+        val improvements = buildableImprovements(unit).map {
+            it to if (it.name == Constants.cancelImprovementOrder) 0 else it.getTurnsToBuild(unit.civ, unit)
+        }
+        return StateWriter.unitDetails(unitView, safeUnitActions(unit), attackTargets(unitView), improvements)
+    }
+
+    /** Everything [unitView] could attack this turn (moving first if needed), as Unciv's own UI computes it. */
+    private fun attackTargets(unitView: MapUnitView): List<AttackableTileView> {
+        if (!unitView.canAttack()) return emptyList()
+        return try {
+            unitView.getAttackableEnemies(unitView.getDistanceToTiles())
+        } catch (ex: Exception) {
+            System.err.println("Couldn't compute attack targets: $ex")
+            emptyList()
+        }
+    }
+
+    /** Improvements [unit] can start on its current tile right now - the same filter as Unciv's improvement picker. */
+    private fun buildableImprovements(unit: MapUnit): List<TileImprovement> {
+        val tile = unit.getTile()
+        if (!unit.hasMovement() || tile.isCityCenter()) return emptyList()
+        return unit.civ.gameInfo.ruleset.tileImprovements.values.filter {
+            (it.turnsToBuild != -1 || it.name == Constants.cancelImprovementOrder)
+                && it.name != tile.improvement
+                && unit.canBuildImprovement(it)
+                && tile.improvementFunctions.canBuildImprovement(it, unit.cache.state)
+        }
+    }
+
+    /**
+     * params: unitId, x, y - attack whatever is on that tile (a unit or a city).
+     * Melee units move next to the target first if needed, just like right-click-attack in Unciv.
+     */
+    private fun attack(params: JsonObject): JsonElement {
+        val game = game()
+        val unit = findOwnUnit(params)
+        val target = HexCoord(params.requireInt("x"), params.requireInt("y"))
+        val gameView = GameView(game, viewer())
+        val unitView = gameView.getMapUnitView(unit)
+        if (!unitView.canAttack()) throw BridgeException("${unit.displayName()} can't attack right now")
+        val attackable = attackTargets(unitView).firstOrNull { it.getTileToAttack().position() == target }
+            ?: throw BridgeException("${unit.displayName()} can't attack that tile")
+        val defender = attackable.getCombatant()
+        val defenderName = defender?.getCombatantName() ?: "target"
+
+        if (!unitView.tryMovePreparingAttack(attackable))
+            return buildJsonObject {
+                put("attacked", false)
+                put("message", "${unit.displayName()} moved into position but can't attack any more this turn")
+            }
+        val damage = unitView.attackOrNuke(attackable)
+        val attackerAlive = unit.civ.units.getCivUnits().any { it === unit }
+        val targetTile = game.tileMap[target]
+        return buildJsonObject {
+            put("attacked", true)
+            put("defender", defenderName)
+            put("damageToDefender", damage.attackerDealt)
+            put("damageToAttacker", damage.defenderDealt)
+            put("attackerAlive", attackerAlive)
+            put("attackerHealth", if (attackerAlive) unit.health else 0)
+            put("defenderDefeated", defender?.isDefeated() ?: false)
+            put("defenderHealth", defender?.getHealth() ?: 0)
+            put("cityCaptured", targetTile.isCityCenter() && targetTile.getOwner() == unit.civ)
+            put("x", unit.getTile().position.x)
+            put("y", unit.getTile().position.y)
+        }
+    }
+
+    /** params: unitId, improvement - a name from getUnit().improvements (Unciv's improvement picker, without the screen). */
+    private fun buildImprovement(params: JsonObject): JsonElement {
+        val unit = findOwnUnit(params)
+        val name = params.requireStr("improvement")
+        val improvement = buildableImprovements(unit).firstOrNull { it.name == name }
+            ?: throw BridgeException("${unit.displayName()} can't build $name here")
+        val tile = unit.getTile()
+        if (improvement.name == Constants.cancelImprovementOrder) {
+            tile.stopWorkingOnImprovement()
+        } else {
+            if (improvement.name != tile.improvementInProgress)
+                tile.startWorkingOnImprovement(improvement, unit.civ, unit)
+            unit.action = null // wakes the worker up if it was sleeping
+        }
+        return buildJsonObject {
+            put("improvementInProgress", tile.improvementInProgress)
+            put("turnsLeft", tile.turnsToImprovement)
+        }
     }
 
     /**

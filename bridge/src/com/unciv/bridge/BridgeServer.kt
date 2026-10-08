@@ -16,6 +16,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import kotlin.concurrent.thread
+import kotlin.system.exitProcess
 
 /**
  * Line-delimited JSON over TCP, bound to localhost only.
@@ -29,6 +30,7 @@ import kotlin.concurrent.thread
  */
 class BridgeServer(private val port: Int, private val session: GameSession) {
     private val gameLock = Any()
+    @Volatile private var shutdownRequested = false
 
     fun run() {
         val serverSocket = ServerSocket(port, 4, InetAddress.getLoopbackAddress())
@@ -52,6 +54,10 @@ class BridgeServer(private val port: Int, private val session: GameSession) {
                 writer.write(response.toString())
                 writer.write("\n")
                 writer.flush()
+                if (shutdownRequested) {
+                    println("Shutdown requested by client - exiting")
+                    exitProcess(0)
+                }
             }
         } catch (_: SocketException) {
             // client went away
@@ -68,6 +74,15 @@ class BridgeServer(private val port: Int, private val session: GameSession) {
             id = request["id"] ?: id
             val method = request.str("method") ?: throw BridgeException("Missing 'method'")
             val params = request.obj("params") ?: JsonObject(emptyMap())
+            if (method == "shutdown") {
+                // Used by the Godot client to stop a bridge it launched itself. Answer first, then exit.
+                shutdownRequested = true
+                return buildJsonObject {
+                    put("id", id)
+                    put("ok", true)
+                    put("result", buildJsonObject { put("shuttingDown", true) })
+                }
+            }
             val startMs = System.currentTimeMillis()
             val result = synchronized(gameLock) { session.handle(method, params) }
             val elapsed = System.currentTimeMillis() - startMs

@@ -4,6 +4,8 @@ import com.unciv.logic.GameInfo
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.HexMath
 import com.unciv.models.UnitAction
+import com.unciv.models.ruleset.tile.TileImprovement
+import com.unciv.view.AttackableTileView
 import com.unciv.view.ForeignMapUnitView
 import com.unciv.view.GameView
 import com.unciv.view.MapUnitView
@@ -177,9 +179,56 @@ object StateWriter {
         put("range", unit.getRange())
     }
 
-    /** One of the player's units, plus where it can go this turn and which actions it has. */
-    fun unitDetails(unit: MapUnitView, actions: List<UnitAction>): JsonObject = buildJsonObject {
+    /** One of the player's units, plus where it can go, what it can attack, what it can build and which actions it has. */
+    fun unitDetails(
+        unit: MapUnitView,
+        actions: List<UnitAction>,
+        targets: List<AttackableTileView>,
+        improvements: List<Pair<TileImprovement, Int>>,
+    ): JsonObject = buildJsonObject {
         writeOwnUnit(unit)
+        val attacker = unit.asCombatant()
+        putJsonArray("targets") {
+            for (target in targets) {
+                val tile = target.getTileToAttack().position()
+                val from = target.getTileToAttackFrom()
+                val defender = target.getCombatant()
+                addJsonObject {
+                    put("x", tile.x)
+                    put("y", tile.y)
+                    put("fromX", from.position().x)
+                    put("fromY", from.position().y)
+                    if (defender != null) {
+                        put("name", defender.getCombatantName())
+                        put("civ", defender.getCivInfo().civName)
+                        put("health", defender.getHealth())
+                        put("maxHealth", defender.getMaxHealth())
+                        put("isCity", defender.isCity())
+                        // Expected damage with average luck, like the numbers in Unciv's battle preview
+                        try {
+                            put("expectedDamageToDefender", attacker.calculateDamageToDefender(defender, from, 0.5f))
+                            put("expectedDamageToAttacker", attacker.calculateDamageToAttacker(defender, from, 0.5f))
+                        } catch (_: Exception) {
+                            // no preview for unusual targets; the attack itself still works
+                        }
+                    }
+                }
+            }
+        }
+        val unitTile = unit.getTile()
+        putJsonObject("tileWork") {
+            put("improvement", unitTile.improvement)
+            put("inProgress", unitTile.improvementInProgress)
+            put("turnsLeft", unitTile.turnsToImprovement)
+        }
+        putJsonArray("improvements") {
+            for ((improvement, turns) in improvements) {
+                addJsonObject {
+                    put("name", improvement.name)
+                    put("turns", turns)
+                }
+            }
+        }
         putJsonArray("reachable") {
             for (tile in unit.getReachableTilesInCurrentTurn()) {
                 val position = tile.position()
