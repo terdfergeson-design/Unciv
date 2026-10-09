@@ -69,8 +69,24 @@ def main():
 
     state = b.call("getState")
     print("cities:", state["cities"])
+    if state["cities"]:
+        city = state["cities"][0]["name"]
+        detail = b.call("getCity", name=city)
+        print(f"city view: focus {detail['focus']}, free pop {detail['freePopulation']}, "
+              f"{len(detail['tiles'])} tiles, {len(detail['specialists'])} specialist kinds, stats {detail['stats']}")
+        worked = next((t for t in detail["tiles"] if t["state"] == "worked"), None)
+        if worked:
+            after = b.call("cityTile", name=city, tileX=worked["x"], tileY=worked["y"], action="toggle")
+            print("unworked a tile, free pop now", after["freePopulation"])
+            after = b.call("cityTile", name=city, tileX=worked["x"], tileY=worked["y"], action="lock")
+            print("locked it:", next(t["state"] for t in after["tiles"] if (t["x"], t["y"]) == (worked["x"], worked["y"])))
+        print("focus:", b.call("setCityFocus", name=city, focus="ProductionFocus")["focus"])
+        print("describe:", b.call("describeConstruction", name=city, construction="Monument")["description"][:80])
     delta = b.call("getState", since=state["revision"])
     print(f"delta getState: full={delta['full']}, {len(delta['tiles'])} of {len(state['tiles'])} tiles resent")
+    for tab in ["cities", "stats", "trades", "units", "politics", "resources", "religion", "wonders", "notifications"]:
+        o = b.call("getOverview", tab=tab)
+        print(f"overview {tab}: tabs {[t['id'] + ':' + t['state'] for t in o['tabs']][:3]}..., keys {sorted(k for k in o if k not in ('tabs', 'tab', 'turn'))}")
     save_path = os.path.join(tempfile.gettempdir(), "unciv-bridge-smoke-test.save")
     print("saved:", b.call("saveGame", path=save_path))
     print("loaded:", b.call("loadGame", path=save_path))

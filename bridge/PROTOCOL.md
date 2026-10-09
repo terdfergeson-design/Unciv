@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v12)
+# Unciv bridge protocol (v15)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 
@@ -37,9 +37,26 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `attack` | `unitId, x, y` (a tile from `getUnit().targets`) | `attacked`, `defender`, `damageToDefender`, `damageToAttacker`, `attackerAlive`, `attackerHealth`, `defenderDefeated`, `defenderHealth`, `cityCaptured`, `x`, `y` (where the attacker ended up). Melee units move next to the target first if needed |
 | `buildImprovement` | `unitId, improvement` (a name from `getUnit().improvements`, including "Cancel improvement order") | `improvementInProgress`, `turnsLeft` |
 | `getCity` | `name` or `x, y` (own city) | `name, x, y, population, foodStored, foodToGrow, turnsToGrowth, turnsToStarvation, health, maxHealth, isCapital, isPuppet`, `yields{food, production, gold, science, culture, faith}`, `queue[{index, name, turns}]`, `buildings[]`, `options[{name, kind (unit/building/wonder/perpetual), turns, cost, buildable, goldCost?, canBuy?}]` |
+| `getCity` (v13 additions) | | also: `stats{food, production, gold, science, culture, happiness, faith}`, `focus`, `focusOptions[{name, label, stats[]}]`, `avoidGrowth`, `manualSpecialists`, `freePopulation`, `growthStatus` (growing / starving / stopped / foodToProduction), `expansion{cultureStored, cultureToNextTile, turns, canExpand}`, `defense`, `rangedStrength`, `resistanceTurns?`, `wltkTurns?`, `demandedResource?`, `resources[{name, amount}]` (city-wide), `greatPeople[{name, perTurn, current, needed}]`, `specialists[{name, assigned, max, stats, color[r,g,b], greatPersonPoints}]`, `religionEnabled`, `religion?{majority?, holyCityOf?, holyCityBlocked, followers[{name, followers, pressure}]}`, `buildingDetails[{name, kind (wonder/specialist/other), stats, specialistSlots[{name, filled}], free, sellGold?, canSell?}]`, `tiles[{x, y, state, yields, buyCost?, canAfford?, owner?, workedBy?, nextToOwn?}]` for every explored tile in range (state: center / worked / locked / notWorked / providesYield / noYield / blockaded / otherCity / outOfRange / buyable / foreign), `workRange`, `viewRange`, `cities[]` (yours, for paging), `isBeingRazed`, `canAnnex`, `canRaze`, `canChange`. Queue entries add `progress`, `cost`, `kind`, `buy[]`; options add `canQueue`, `needsTile?`, `buy[{stat, cost, allowed, blockedByUnit}]`, `why[]` (when not buildable) |
+| `cityTile` | city, `tileX, tileY`, `action`: toggle (Unciv's click) / work / unwork / lock / unlock / buy | the updated `getCity` result |
+| `setCityFocus` | city, `focus` (a name from `focusOptions`) | the updated `getCity` result |
+| `setAvoidGrowth` | city, `avoid` | the updated `getCity` result |
+| `resetCitizens` | city | the updated `getCity` result (locks cleared, citizens re-placed) |
+| `setManualSpecialists` | city, `manual` | the updated `getCity` result |
+| `setSpecialist` | city, `specialist`, `delta` (1 or -1) | the updated `getCity` result |
+| `moveInQueue` | city, `index`, `to` (up / down / top / end) | the updated `getCity` result |
+| `sellBuilding` | city, `building` | the updated `getCity` result (one sale per city per turn) |
+| `setRazing` | city, `raze` | the updated `getCity` result |
+| `annexCity` | city (a puppet) | the updated `getCity` result |
+| `getOverview` | `tab`: cities / stats / trades / units / politics / resources / religion / wonders / notifications | Unciv's Empire Overview tab: `tabs[{id, state (normal / disabled / hidden)}]`, `tab`, `turn`, plus per tab - **cities**: `religionEnabled`, `cityWideResources[]`, `cities[{name, x, y, isCapital, status (razing / resistance / puppet / ""), construction, constructionTurns, population, food, gold, science, production, culture, happiness, faith, wltk, wltkTurns?, demanding?, garrison?{id, name}, defense, health, maxHealth, religion?, holyCity?, resources{}}]`; **stats**: `happiness{source: value}`, `gold`, `science`, `culture`, `faith?` (same shape), `goldToScience?`, `greatPeople[{name, points, needed, perTurn}]`, `greatGenerals[{name, points, needed}]`, `score{}`; **trades**: `pending[]`, `current[]` of `{civ, nation, colours, ours[text], theirs[text]}`; **units**: `supply{base, cities, population, total, inUse, deficit, productionPenalty}`, `units[{id, name, baseUnit, unitType, x, y, civilian, idle, action?, strength, rangedStrength, movement, maxMovement, closestCity?, inCity?, promotions[], canPromote, health, xp?, xpForNextPromotion?, upgrades[{to, cost, enabled}]}]`; **politics**: `civs[{name, leader, era, defeated, score, colours, policies[{branch, count}], wonders[{name, x?, y?}], wars[], defensivePacts[{civ, turns}], friends[], denounced[], alliedCityStates[]}]`, `diagram{civs[], lines[{a, b, relation}]}`, `civsInGame`; **resources**: `origins[]`, `extraOrigins[]`, `resources[{name, type, stockpiled, amounts{origin: n}, total, extra{}}]`; **religion**: `enabled, toFound, toFoundBreakdown[{text, value}], prophet?, faithForProphet?, status, religions[{name, displayName, icon, pantheon, foundingCiv, founder?, holyCity?, cities, followers, beliefs[{name, type, text}]}]`; **wonders**: `wonders[{name, realName, category, group, groupColor, status, statusText, location, x?, y?}]`; **notifications**: `turns[{turn, year, current, notifications[{text, category, icons[], actions[{type (City / Location / Tech / Policy / Diplomacy / ...), x?, y?, ...}]}]}]` |
+| `upgradeUnit` | `unitId`, `to?` | upgrades it anywhere (gold), like the Units tab; returns the units tab |
+| `setGoldToScience` | `percent` (0-1) | only for rulesets with Unciv's gold-to-science conversion; returns the stats tab |
+| `renameCity` | city (`name` or `x, y`), `newName` | the updated `getCity` result (names must be unique) |
+| `renameUnit` | `unitId`, `newName` (empty: back to its ordinary name) | the updated `getUnit` result; units you've named carry `instanceName` (in getState and getUnit; `name` stays the unit type) |
+| `describeConstruction` | city, `construction` | `name`, `description` (Unciv's text for it, as its city screen shows) |
 | `setProduction` | city (`name` or `x, y`), `construction`, `mode` ("now" = build next, default; "queue" = add to the end) | the updated `getCity` result |
 | `removeFromQueue` | city, `index` | the updated `getCity` result |
-| `buyConstruction` | city, `construction` | the updated `getCity` result (bought with gold) |
+| `buyConstruction` | city, `construction`, `stat?` (gold - default - or faith etc. where allowed), `queueIndex?` | the updated `getCity` result |
 | `getTechs` | – | `current, freeTechs, sciencePerTurn, queue[]`, `techs[{name, era, column, row, cost, progress, researched, researchable, queueIndex, turns?, prerequisites[], unlocks[{name, kind: unit / building / wonder / resource / improvement / obsolete}]}]` |
 | `setResearch` | `tech` | the updated `getTechs` result. Queues missing prerequisites first; uses a free tech if you have one |
 | `describeTech` | `tech` | `name`, `description` - Unciv's full text: effects, units / buildings / wonders enabled, what it obsoletes and reveals |
@@ -83,5 +100,5 @@ Colors are `rrggbbaa` hex strings (Godot: `Color.html(s)`).
 - Your automated units move when you end your turn (Unciv's "Move automated units" step), unless
   `setSettings` asks for the start of the turn instead.
 - Conquering a city lets Unciv's AI decide whether to annex, puppet or raze it (no popup yet).
-- No tile working / specialists / diplomacy / policies methods yet.
+- Buildings that place an improvement on a chosen tile (`needsTile`) can't be built or bought through the bridge yet.
 - `getState` still builds every tile on the bridge side each call; only changed tiles go over the wire when `since` is used.

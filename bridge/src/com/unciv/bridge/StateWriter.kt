@@ -4,7 +4,11 @@ import com.unciv.logic.GameInfo
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.HexMath
 import com.unciv.models.UnitAction
+import com.unciv.logic.city.CityFlags
+import com.unciv.logic.city.CityFocus
 import com.unciv.models.ruleset.Building
+import com.unciv.models.ruleset.IConstruction
+import com.unciv.models.ruleset.unique.UniqueType
 import com.unciv.models.ruleset.INonPerpetualConstruction
 import com.unciv.models.ruleset.PerpetualConstruction
 import com.unciv.models.stats.Stat
@@ -25,6 +29,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.math.ceil
 
 /**
  * Turns game state into JSON for the client, always from the point of view of one civ.
@@ -197,6 +202,7 @@ object StateWriter {
     private fun JsonObjectBuilder.writeForeignUnit(unit: ForeignMapUnitView) {
         put("id", unit.id)
         put("name", unit.getBaseUnit().name)
+        unit.instanceName?.let { put("instanceName", it) }   // a name you gave it (renameUnit)
         put("civ", unit.civName)
         put("health", unit.unitHealth)
         put("civilian", unit.isCivilian())
@@ -345,7 +351,10 @@ object StateWriter {
     /** A city's growth, yields, queue and everything it could build - what Unciv's city screen shows. */
     fun cityDetails(city: CityView): JsonObject = buildJsonObject {
         city.updateTileStats()
+        city.updateCityStats()
         val constructions = city.constructions
+        val civ = city.viewingCiv()
+        val ruleset = city.getRuleset()
         put("name", city.name)
         put("x", city.location.x)
         put("y", city.location.y)
@@ -365,31 +374,43 @@ object StateWriter {
                     put("index", index)
                     put("name", name)
                     put("turns", safeTurns(city, name, true))
+                    val construction = try { constructions.getConstruction(name) } catch (_: Exception) { null }
+                    if (construction is INonPerpetualConstruction) {
+                        put("progress", constructions.getWorkDone(name))
+                        put("cost", city.getConstructionProductionCost(construction))
+                        writeBuyOptions(city, construction)
+                    }
+                    put("kind", constructionKind(construction))
                 }
             }
         }
         putJsonArray("buildings") { city.getBuiltBuildings().forEach { add(it.name) } }
 
-        val ruleset = city.getRuleset()
         putJsonArray("options") {
             for (construction in ruleset.units.values.asSequence() + ruleset.buildings.values.asSequence()) {
                 if (!constructions.shouldBeDisplayed(construction)) continue
                 val nonPerpetual = construction as INonPerpetualConstruction
                 addJsonObject {
                     put("name", construction.name)
-                    put("kind", when {
-                        construction is Building && construction.isAnyWonder() -> "wonder"
-                        construction is Building -> "building"
-                        else -> "unit"
-                    })
+                    put("kind", constructionKind(construction))
                     val useStored = construction is Building || !constructions.isBeingConstructedOrEnqueued(construction.name)
                     put("turns", safeTurns(city, construction.name, useStored))
                     put("cost", city.getConstructionProductionCost(nonPerpetual))
                     put("buildable", constructions.isBuildable(construction))
+                    put("canQueue", constructions.canAddToQueue(construction))
+                    if (construction is Building && construction.hasCreateOneImprovementUnique()) put("needsTile", true)
                     val goldCost = try { constructions.getStatBuyCost(nonPerpetual, Stat.Gold) } catch (_: Exception) { null }
                     if (goldCost != null) {
                         put("goldCost", goldCost)
                         put("canBuy", constructions.isConstructionPurchaseAllowed(nonPerpetual, Stat.Gold, goldCost))
+                    }
+                    writeBuyOptions(city, nonPerpetual)
+                    if (!constructions.isBuildable(construction)) {
+                        val reasons = try {
+                            constructions.getRejectionReasons(nonPerpetual).filter { it.isImportantRejection() }
+                                .map { it.errorMessage }.filter { it.isNotBlank() }.distinct().take(3).toList()
+                        } catch (_: Exception) { emptyList() }
+                        putJsonArray("why") { reasons.forEach { add(it) } }
                     }
                 }
             }
@@ -400,9 +421,225 @@ object StateWriter {
                     put("kind", "perpetual")
                     put("turns", -1)
                     put("buildable", constructions.isBuildable(perpetual))
+                    put("canQueue", constructions.canAddToQueue(perpetual))
                 }
             }
         }
+
+        // region v13: the rest of Unciv's city screen
+        val stats = city.getCurrentCityStats()
+        putJsonObject("stats") {
+            for (stat in Stat.entries) {
+                val value = if (stat == Stat.Happiness) city.getHappinessList().values.sum() else stats[stat]
+                put(stat.name.lowercase(), value)
+            }
+        }
+        val religionEnabled = city.isReligionEnabled()
+        put("religionEnabled", religionEnabled)
+        put("focus", city.getCityFocus().name)
+        putJsonArray("focusOptions") {
+            for (focus in CityFocus.entries) {
+                if (!focus.tableEnabled) continue
+                if (focus == CityFocus.FaithFocus && !religionEnabled) continue
+                addJsonObject {
+                    put("name", focus.name)
+                    put("label", when (focus) { CityFocus.NoFocus -> "Default"; CityFocus.Manual -> "Manual"; else -> "" })
+                    putJsonArray("stats") { focus.statValuesForFocus.forEach { add(it.name.lowercase()) } }
+                }
+            }
+        }
+        put("avoidGrowth", city.avoidGrowth)
+        put("manualSpecialists", city.manualSpecialists)
+        put("freePopulation", city.getFreePopulation())
+        val unitBeingBuilt = ruleset.units[city.currentConstructionName()]
+        put("growthStatus", when {
+            city.isStarving() -> "starving"
+            unitBeingBuilt != null && unitBeingBuilt.hasUnique(UniqueType.ConvertFoodToProductionWhenConstructed) -> "foodToProduction"
+            city.isGrowing() -> "growing"
+            else -> "stopped"
+        })
+        putJsonObject("expansion") {
+            val choosable = city.hasChoosableTiles()
+            val remaining = city.getCultureToNextTile() - city.getCultureStored()
+            put("cultureStored", city.getCultureStored())
+            put("cultureToNextTile", city.getCultureToNextTile())
+            put("canExpand", choosable)
+            put("turns", if (stats.culture > 0 && choosable) maxOf(1, ceil(remaining / stats.culture).toInt()) else -1)
+        }
+        put("defense", city.getDefendingStrength())
+        put("rangedStrength", city.getAttackingStrength())
+        if (city.isInResistance()) put("resistanceTurns", city.getFlag(CityFlags.Resistance))
+        if (city.isWeLoveTheKingDayActive()) put("wltkTurns", city.getFlag(CityFlags.WeLoveTheKing))
+        if (city.demandedResource.isNotEmpty()) put("demandedResource", city.demandedResource)
+        putJsonArray("resources") {
+            val counter = LinkedHashMap<String, Int>()
+            for (supply in city.getCityResourcesAvailableToCity()) {
+                val resource = supply.resource
+                if (!resource.isCityWide || resource.getMatchingUniques(UniqueType.NotShownOnWorldScreen, city.getState()).any()) continue
+                counter[resource.name] = (counter[resource.name] ?: 0) + supply.amount
+            }
+            for ((name, amount) in city.getResourceStockpiles()) {
+                val resource = ruleset.tileResources[name] ?: continue
+                if (!resource.isCityWide || resource.getMatchingUniques(UniqueType.NotShownOnWorldScreen, city.getState()).any()) continue
+                counter[name] = (counter[name] ?: 0) + amount
+            }
+            for ((name, amount) in counter) addJsonObject { put("name", name); put("amount", amount) }
+        }
+        putJsonArray("greatPeople") {
+            val breakdown = city.getGreatPersonPointsBreakdown()
+            val perTurn = breakdown.sum()
+            for (name in breakdown.allNames.sorted()) {
+                if (name !in ruleset.units) continue
+                addJsonObject {
+                    put("name", name)
+                    put("perTurn", perTurn[name])
+                    put("current", civ.getGreatPersonPoints(name))
+                    put("needed", civ.getPointsRequiredForGreatPerson(name))
+                }
+            }
+        }
+        putJsonArray("specialists") {
+            val assigned = city.getNewSpecialists()
+            for ((name, max) in city.getMaxSpecialists().entries.sortedBy { it.key }) {
+                val specialist = ruleset.specialists[name] ?: continue
+                addJsonObject {
+                    put("name", name)
+                    put("assigned", assigned[name])
+                    put("max", max)
+                    writeStats("stats", city.getStatsOfSpecialist(name))
+                    putJsonArray("color") { specialist.color.forEach { add(it) } }
+                    putJsonObject("greatPersonPoints") { for ((gp, points) in specialist.greatPersonPoints) put(gp, points) }
+                }
+            }
+        }
+        if (religionEnabled) putJsonObject("religion") {
+            city.getMajorityReligion()?.let { put("majority", it.name) }
+            city.getReligionThisIsTheHolyCityOf()?.let {
+                put("holyCityOf", it)
+                put("holyCityBlocked", city.isBlockedHolyCity())
+            }
+            val pressures = city.getPressuresFromSurroundingCities()
+            putJsonArray("followers") {
+                for ((religion, count) in city.getNumberOfFollowers().entries.sortedByDescending { it.value }) {
+                    addJsonObject {
+                        put("name", religion)
+                        put("followers", count)
+                        put("pressure", pressures[religion] ?: 0)
+                    }
+                }
+            }
+        }
+        putJsonArray("buildingDetails") {
+            val filledSlots = city.getNewSpecialists().clone()
+            val canChange = civ.isCurrentPlayer() && !city.isPuppet()
+            for (building in city.getBuiltBuildings().sortedBy { it.name }) {
+                addJsonObject {
+                    put("name", building.name)
+                    put("kind", when {
+                        building.isAnyWonder() -> "wonder"
+                        building.newSpecialists().isNotEmpty() -> "specialist"
+                        else -> "other"
+                    })
+                    writeStats("stats", city.getBuildingStats(building))
+                    putJsonArray("specialistSlots") {
+                        for ((specialist, amount) in building.newSpecialists()) {
+                            repeat(amount) {
+                                val filled = filledSlots[specialist] > 0
+                                if (filled) filledSlots.add(specialist, -1)
+                                addJsonObject { put("name", specialist); put("filled", filled) }
+                            }
+                        }
+                    }
+                    val free = city.hasFreeBuilding(building)
+                    put("free", free)
+                    if (building.isSellable()) {
+                        put("sellGold", city.getGoldForSellingBuilding(building.name))
+                        put("canSell", canChange && !free && !city.hasSoldBuildingThisTurn())
+                    }
+                }
+            }
+        }
+        putJsonArray("tiles") {
+            val range = maxOf(city.getExpandRange(), city.getWorkRange())
+            val next = city.chooseNewTileToOwn()?.position()
+            for (tile in city.centerTile().getVisibleTilesInDistance(range)) {
+                if (!civ.hasExplored(tile)) continue
+                val position = tile.position()
+                val owning = tile.owningCity()
+                val canBuy = city.canBuyTile(tile)
+                val tileStats = tile.getTileStats(civ, city)
+                addJsonObject {
+                    put("x", position.x)
+                    put("y", position.y)
+                    put("state", when {
+                        owning?.isSameCivAs(city) != true -> if (canBuy) "buyable" else "foreign"
+                        !city.isInRange(tile) -> "outOfRange"
+                        tile.isWorked() && tile.getWorkingCity()?.name != city.name -> "otherCity"
+                        tile.isCityCenter() -> "center"
+                        tileStats.isEmpty() -> "noYield"
+                        tile.isBlockaded() -> "blockaded"
+                        tile.isLocked() -> "locked"
+                        tile.isWorked() -> "worked"
+                        tile.providesYield() -> "providesYield"
+                        else -> "notWorked"
+                    })
+                    writeStats("yields", tileStats)
+                    if (canBuy) {
+                        val cost = city.getGoldCostOfTile(tile)
+                        put("buyCost", cost)
+                        put("canAfford", civ.hasStatToBuy(Stat.Gold, cost))
+                    }
+                    if (owning != null) put("owner", owning.name)
+                    tile.getWorkingCity()?.let { put("workedBy", it.name) }
+                    if (position == next) put("nextToOwn", true)
+                }
+            }
+        }
+        put("workRange", city.getWorkRange())
+        put("viewRange", maxOf(city.getExpandRange(), city.getWorkRange()))
+        putJsonArray("cities") { city.getViewableCities().forEach { add(it.name) } }
+        val mayAnnex = !civ.hasUnique(UniqueType.MayNotAnnexCities)
+        put("isBeingRazed", city.isBeingRazed())
+        put("canAnnex", city.isPuppet() && mayAnnex)
+        put("canRaze", !city.isPuppet() && !city.isBeingRazed() && city.canBeDestroyed() && mayAnnex)
+        put("canChange", civ.isCurrentPlayer() && !city.isPuppet())
+        // endregion
+    }
+
+    private fun constructionKind(construction: IConstruction?): String = when {
+        construction is Building && construction.isAnyWonder() -> "wonder"
+        construction is Building -> "building"
+        construction is PerpetualConstruction -> "perpetual"
+        construction == null -> "unknown"
+        else -> "unit"
+    }
+
+    /** What [construction] could be bought with right now: [{stat, cost, allowed, blockedByUnit}], like Unciv's buy buttons. */
+    private fun JsonObjectBuilder.writeBuyOptions(city: CityView, construction: INonPerpetualConstruction) {
+        val constructions = city.constructions
+        putJsonArray("buy") {
+            for (stat in Stat.statsUsableToBuy) {
+                if (!city.canBePurchasedWithStat(construction, stat)) continue
+                val cost = try { constructions.getStatBuyCost(construction, stat) } catch (_: Exception) { null } ?: continue
+                addJsonObject {
+                    put("stat", stat.name.lowercase())
+                    put("cost", cost)
+                    put("allowed", constructions.isConstructionPurchaseAllowed(construction, stat, cost))
+                    put("blockedByUnit", constructions.isConstructionPurchaseBlockedByUnit(construction))
+                }
+            }
+        }
+    }
+
+    /** Unciv's description of a construction (as its city screen shows it), from [city]'s point of view. */
+    fun constructionDescription(city: CityView, name: String): JsonObject = buildJsonObject {
+        val ruleset = city.getRuleset()
+        val text = ruleset.units[name]?.let { city.getUnitDescription(it) }
+            ?: ruleset.buildings[name]?.let { city.getBuildingDescription(it) }
+            ?: PerpetualConstruction.perpetualConstructionsMap[name]?.let { city.getProductionTooltip(it) }
+            ?: throw BridgeException("Unknown construction '$name'")
+        put("name", name)
+        put("description", text)
     }
 
     /** The whole tech tree from [civ]'s point of view, plus what's being researched. */

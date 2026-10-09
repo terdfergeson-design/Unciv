@@ -5,6 +5,7 @@ import com.unciv.UncivGame
 import com.unciv.logic.GameInfo
 import com.unciv.logic.GameStarter
 import com.unciv.logic.city.City
+import com.unciv.logic.city.CityFocus
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.civilization.diplomacy.DiplomacyFlags
@@ -142,6 +143,94 @@ class GameSession {
         "setProduction" -> setProduction(params)
         "removeFromQueue" -> removeFromQueue(params)
         "buyConstruction" -> buyConstruction(params)
+        "cityTile" -> cityTile(params)
+        "setCityFocus" -> cityChange(params) { city ->
+            val name = params.requireStr("focus")
+            val focus = CityFocus.entries.firstOrNull { it.name == name } ?: throw BridgeException("Unknown focus '$name'")
+            city.trySetCityFocus(focus)
+        }
+        "setAvoidGrowth" -> cityChange(params) { city ->
+            if ((params.bool("avoid") ?: !city.avoidGrowth) != city.avoidGrowth) city.tryToggleAvoidGrowth() else true
+        }
+        "resetCitizens" -> cityChange(params) { city -> city.tryReassignPopulation(resetLocked = true) }
+        "setManualSpecialists" -> cityChange(params) { city ->
+            if (params.bool("manual") ?: true) city.tryEnableManualSpecialists() else city.tryDisableManualSpecialists()
+        }
+        "setSpecialist" -> cityChange(params) { city ->
+            val name = params.requireStr("specialist")
+            val delta = params.int("delta") ?: 1
+            val max = city.getMaxSpecialists()[name]
+            val assigned = city.getNewSpecialists()[name]
+            when {
+                delta > 0 && assigned >= max -> throw BridgeException("No free $name slots - build more buildings that have them")
+                delta > 0 && city.getFreePopulation() <= 0 -> throw BridgeException("No free citizens - take one off a tile first")
+                delta < 0 && assigned <= 0 -> throw BridgeException("No $name to take off")
+                delta > 0 -> city.tryAssignSpecialist(name)
+                else -> city.tryUnassignSpecialist(name)
+            }
+        }
+        "moveInQueue" -> cityChange(params) { city ->
+            val index = params.requireInt("index")
+            if (index !in city.constructions.constructionQueue.indices) throw BridgeException("No queue entry $index")
+            when (params.str("to") ?: "up") {
+                "up" -> city.tryRaisePriority(index) != null
+                "down" -> city.tryLowerPriority(index) != null
+                "top" -> city.tryMoveEntryToTop(index)
+                "end" -> city.tryMoveEntryToEnd(index)
+                else -> throw BridgeException("'to' must be up, down, top or end")
+            }.also { city.tryReassignPopulation() }
+        }
+        "sellBuilding" -> cityChange(params) { city ->
+            val name = params.requireStr("building")
+            val building = city.getBuiltBuildings().firstOrNull { it.name == name } ?: throw BridgeException("${city.name} has no $name")
+            if (!building.isSellable()) throw BridgeException("$name can't be sold")
+            if (city.hasFreeBuilding(building)) throw BridgeException("$name was free - it can't be sold")
+            if (city.hasSoldBuildingThisTurn()) throw BridgeException("${city.name} already sold a building this turn")
+            city.trySellBuilding(building)
+        }
+        "setRazing" -> cityChange(params, allowPuppet = true) { city ->
+            val raze = params.bool("raze") ?: true
+            if (raze && !city.canBeDestroyed()) throw BridgeException("${city.name} can't be razed")
+            city.trySetRazing(raze)
+        }
+        "annexCity" -> cityChange(params, allowPuppet = true) { city ->
+            if (!city.isPuppet()) throw BridgeException("${city.name} isn't a puppet")
+            city.tryAnnexCity()
+        }
+        "getOverview" -> OverviewWriter.overview(game(), viewer(), params.str("tab") ?: "cities")
+        "upgradeUnit" -> {
+            if (!viewer().isCurrentPlayer()) throw BridgeException("It isn't your turn")
+            OverviewWriter.upgradeUnit(viewer(), params.requireInt("unitId"), params.str("to"))
+            OverviewWriter.overview(game(), viewer(), "units")
+        }
+        "setGoldToScience" -> {
+            val civView = GameView(game(), viewer()).civView
+            val percent = (params.str("percent")?.toFloatOrNull() ?: throw BridgeException("percent (0 to 1) is required")).coerceIn(0f, 1f)
+            if (!game().ruleset.modOptions.hasUnique(com.unciv.models.ruleset.unique.UniqueType.ConvertGoldToScience))
+                throw BridgeException("This ruleset doesn't let you convert gold to science")
+            civView.trySetGoldPercentConvertedToScience(percent)
+            civView.tryUpdateAllCityStats()
+            OverviewWriter.overview(game(), viewer(), "stats")
+        }
+        "renameCity" -> {
+            val target = findOwnCity(params)
+            val newName = params.requireStr("newName").trim()
+            if (newName.isEmpty()) throw BridgeException("A city needs a name")
+            if (game().getCities().any { it.name == newName && it !== target })
+                throw BridgeException("There's already a city called $newName")
+            cityChange(params) { city -> city.tryRenameCity(newName) }
+        }
+        "renameUnit" -> {
+            val unit = findOwnUnit(params)
+            val newName = params.str("newName")?.trim()
+            // Like Unciv's rename popup: an empty name goes back to the unit's ordinary name
+            GameView(game(), viewer()).getMapUnitView(unit).trySetInstanceName(if (newName.isNullOrEmpty()) null else newName)
+            getUnit(params)
+        }
+        "describeConstruction" -> {
+            val city = findOwnCity(params)
+            StateWriter.constructionDescription(GameView(game(), viewer()).getCityView(city), params.requireStr("construction"))
+        }
         "getTechs" -> StateWriter.techs(viewer())
         "setResearch" -> setResearch(params)
         "promote" -> promote(params)
@@ -788,7 +877,10 @@ class GameSession {
         return StateWriter.cityDetails(cityView)
     }
 
-    /** params: name or x, y; construction. Buys it with gold right now. */
+    /**
+     * params: name or x, y; construction; stat (optional: gold - the default - or faith, food, science, culture,
+     * where the rules allow it); queueIndex (optional: buying a queue entry finishes that entry). Buys it right now.
+     */
     private fun buyConstruction(params: JsonObject): JsonElement {
         val city = findOwnCity(params)
         val cityView = GameView(game(), viewer()).getCityView(city)
@@ -796,13 +888,78 @@ class GameSession {
         val ruleset = city.getRuleset()
         val construction: INonPerpetualConstruction = ruleset.units[name] ?: ruleset.buildings[name]
             ?: throw BridgeException("Can't buy '$name'")
+        val statName = params.str("stat") ?: "gold"
+        val stat = Stat.statsUsableToBuy.firstOrNull { it.name.equals(statName, ignoreCase = true) }
+            ?: throw BridgeException("Can't buy with '$statName'")
+        if (construction is Building && construction.hasCreateOneImprovementUnique())
+            throw BridgeException("$name needs a target tile, which the bridge doesn't support yet")
         val constructions = cityView.constructions
-        val cost = constructions.getStatBuyCost(construction, Stat.Gold)
-            ?: throw BridgeException("$name can't be bought with gold")
-        if (!constructions.isConstructionPurchaseAllowed(construction, Stat.Gold, cost))
-            throw BridgeException("Can't buy $name for $cost gold (not enough gold, or not allowed here)")
-        if (!constructions.purchaseConstruction(construction, -1, Stat.Gold, null))
-            throw BridgeException("Buying $name failed")
+        if (!cityView.canBePurchasedWithStat(construction, stat)) throw BridgeException("$name can't be bought with ${stat.name.lowercase()}")
+        val cost = constructions.getStatBuyCost(construction, stat)
+            ?: throw BridgeException("$name can't be bought with ${stat.name.lowercase()}")
+        if (constructions.isConstructionPurchaseBlockedByUnit(construction))
+            throw BridgeException("Move the unit out of ${city.name} first")
+        if (!constructions.isConstructionPurchaseAllowed(construction, stat, cost))
+            throw BridgeException("Can't buy $name for $cost ${stat.name.lowercase()} (not enough, or not allowed here)")
+        val queueIndex = params.int("queueIndex") ?: -1
+        if (!constructions.purchaseConstruction(construction, queueIndex, stat, null))
+            throw BridgeException("Buying $name failed (no room to place it?)")
+        return StateWriter.cityDetails(cityView)
+    }
+
+    /** Runs one of [CityView]'s try... actions on your city (params: name or x, y) and returns the updated city. */
+    private fun cityChange(params: JsonObject, allowPuppet: Boolean = false, change: (com.unciv.view.CityView) -> Boolean): JsonElement {
+        val city = findOwnCity(params)
+        val cityView = GameView(game(), viewer()).getCityView(city)
+        if (!viewer().isCurrentPlayer()) throw BridgeException("It isn't your turn")
+        // Puppets run themselves; as in Unciv's city screen you can only annex (or raze) them
+        if (city.isPuppet && !allowPuppet) throw BridgeException("${city.name} is a puppet - annex it to manage it")
+        if (!change(cityView)) throw BridgeException("${city.name}: that isn't possible right now")
+        cityView.updateCityStats()
+        return StateWriter.cityDetails(cityView)
+    }
+
+    /**
+     * params: city (name or x, y); tileX, tileY; action: "toggle" (Unciv's click: work an unworked tile when a
+     * citizen is free, otherwise stop working it), "work", "unwork", "lock" (also works it), "unlock", "buy".
+     */
+    private fun cityTile(params: JsonObject): JsonElement {
+        val city = findOwnCity(params)
+        val gameView = GameView(game(), viewer())
+        val cityView = gameView.getCityView(city)
+        if (!viewer().isCurrentPlayer()) throw BridgeException("It isn't your turn")
+        val position = HexCoord(params.requireInt("tileX"), params.requireInt("tileY"))
+        if (position !in game().tileMap) throw BridgeException("($position) is off the map")
+        val tile = game().tileMap[position]
+        val tileView = gameView.getTile(tile)
+        val action = params.str("action") ?: "toggle"
+        if (action == "buy") {
+            if (!cityView.canBuyTile(tileView)) throw BridgeException("${city.name} can't buy that tile")
+            val cost = cityView.getGoldCostOfTile(tileView)
+            if (!viewer().hasStatToBuy(Stat.Gold, cost)) throw BridgeException("That tile costs $cost gold - you have ${viewer().gold}")
+            if (!cityView.tryBuyTile(tileView)) throw BridgeException("Buying the tile failed")
+            cityView.updateCityStats()
+            return StateWriter.cityDetails(cityView)
+        }
+        if (city.isPuppet) throw BridgeException("${city.name} is a puppet - it works its own tiles")
+        val workable = tile in city.getWorkableTiles() && !tile.isCityCenter() && tile.getWorkingCity().let { it == null || it == city }
+        if (!workable) throw BridgeException("${city.name} can't work that tile")
+        val worked = city.isWorked(tile)
+        fun work() {
+            if (city.population.getFreePopulation() <= 0)
+                throw BridgeException("No free citizens - take one off another tile or a specialist first")
+            cityView.tryWorkTile(tileView)
+        }
+        when (action) {
+            "toggle" -> if (!worked && city.population.getFreePopulation() > 0) work() else if (worked) cityView.tryStopWorkingTile(tileView)
+                else throw BridgeException("No free citizens - take one off another tile or a specialist first")
+            "work" -> if (!worked) work()
+            "unwork" -> cityView.tryStopWorkingTile(tileView)
+            "lock" -> { if (!worked) work(); cityView.tryLockTile(tileView) }
+            "unlock" -> cityView.tryUnlockTile(tileView)
+            else -> throw BridgeException("Unknown tile action '$action'")
+        }
+        cityView.updateCityStats()
         return StateWriter.cityDetails(cityView)
     }
 
