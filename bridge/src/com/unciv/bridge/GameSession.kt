@@ -7,10 +7,19 @@ import com.unciv.logic.GameStarter
 import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.PlayerType
+import com.unciv.logic.civilization.diplomacy.DiplomacyFlags
+import com.unciv.logic.trade.TradeEvaluation
+import com.unciv.logic.trade.TradeLogic
+import com.unciv.logic.trade.TradeOffer
+import com.unciv.logic.trade.TradeOfferType
+import com.unciv.models.ruleset.Policy.PolicyBranchType
 import com.unciv.logic.files.UncivFiles
 import com.unciv.logic.map.HexCoord
 import com.unciv.logic.map.MapShape
 import com.unciv.logic.map.MapSize
+import com.unciv.logic.map.MapType
+import com.unciv.logic.map.mapgenerator.MapResourceSetting
+import com.unciv.models.ruleset.Speed
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.mapunit.movement.UnitMovement
 import com.unciv.models.UnitAction
@@ -30,13 +39,19 @@ import com.unciv.view.AttackableTileView
 import com.unciv.view.GameView
 import com.unciv.view.MapUnitView
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.io.File
+import kotlin.concurrent.thread
 
 /**
  * Holds the one game the bridge is running and implements every protocol method.
@@ -46,7 +61,43 @@ import java.io.File
  * the human player is allowed to see. See bridge/PROTOCOL.md for the method list.
  */
 class GameSession {
+    companion object {
+        const val RANDOM = "Random"
+        const val AUTOSAVE = "Autosave"
+
+        /** What a new game uses when the client doesn't say otherwise. */
+        val DEFAULT_SETUP: Map<String, JsonElement> = mapOf(
+            "civ" to JsonPrimitive(RANDOM),
+            "ruleset" to JsonPrimitive(BaseRuleset.Civ_V_GnK.fullName),
+            "difficulty" to JsonPrimitive("Prince"),
+            "speed" to JsonPrimitive(Speed.DEFAULT),
+            "startingEra" to JsonPrimitive("Ancient era"),
+            "aiPlayers" to JsonPrimitive(3),
+            "cityStates" to JsonPrimitive(4),
+            "mapSize" to JsonPrimitive("Tiny"),
+            "mapShape" to JsonPrimitive(MapShape.hexagonal),
+            "mapType" to JsonPrimitive(MapType.pangaea),
+            "mapResources" to JsonPrimitive(MapResourceSetting.default.label),
+            "noRuins" to JsonPrimitive(false),
+            "noNaturalWonders" to JsonPrimitive(false),
+            "noBarbarians" to JsonPrimitive(false),
+            "ragingBarbarians" to JsonPrimitive(false),
+            "oneCityChallenge" to JsonPrimitive(false),
+            "noCityRazing" to JsonPrimitive(false),
+            "nuclearWeapons" to JsonPrimitive(true),
+            "espionage" to JsonPrimitive(false),
+        )
+    }
+
     private var gameInfo: GameInfo? = null
+
+    // Delta updates for getState: what each tile looked like when last sent, and a revision number
+    // the client hands back as "since" to get only the tiles that changed after that.
+    private var sentTiles: Array<JsonObject?> = emptyArray()
+    private var stateRevision = 0
+
+    /** Off for test games (newGame with remember: false), so they don't replace the player's autosave. */
+    private var autosaveEnabled = true
 
     fun handle(method: String, params: JsonObject): JsonElement = when (method) {
         "ping" -> ping()
@@ -54,7 +105,32 @@ class GameSession {
         "newGame" -> newGame(params)
         "loadGame" -> loadGame(params)
         "saveGame" -> saveGame(params)
-        "getState" -> StateWriter.state(game(), viewer())
+        "getState" -> getState(params)
+        "getSetup" -> getSetup()
+        "getPolicies" -> getPolicies()
+        "describeTech" -> StateWriter.techDescription(viewer(), params.requireStr("tech"))
+        "getYields" -> {
+            val positions = (params["tiles"] as? JsonArray ?: JsonArray(emptyList())).mapNotNull { element ->
+                val pair = element as? JsonArray ?: return@mapNotNull null
+                val x = (pair.getOrNull(0) as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toInt() ?: return@mapNotNull null
+                val y = (pair.getOrNull(1) as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toInt() ?: return@mapNotNull null
+                HexCoord(x, y)
+            }
+            StateWriter.yields(game(), viewer(), positions)
+        }
+        "adoptPolicy" -> adoptPolicy(params)
+        "getDiplomacy" -> getDiplomacy()
+        "declareWar" -> declareWar(params)
+        "offerPeace" -> offerPeace(params)
+        "getTradeOptions" -> getTradeOptions(params)
+        "evaluateTrade" -> evaluateTrade(params)
+        "proposeTrade" -> proposeTrade(params)
+        "getTile" -> {
+            val position = HexCoord(params.requireInt("x"), params.requireInt("y"))
+            if (position !in game().tileMap) throw BridgeException("($position) is off the map")
+            StateWriter.tileDetails(game(), viewer(), game().tileMap[position])
+        }
+        "listSaves" -> listSaves()
         "getRuleset" -> StateWriter.ruleset(game())
         "getUnit" -> getUnit(params)
         "moveUnit" -> moveUnit(params)
@@ -88,6 +164,8 @@ class GameSession {
 
     private fun setGame(game: GameInfo) {
         gameInfo = game
+        sentTiles = emptyArray()
+        stateRevision++   // a client's old "since" no longer matches, so it gets the new map in full
         UncivGame.Current.gameInfo = game
     }
 
@@ -109,13 +187,35 @@ class GameSession {
 
     // endregion
 
+    /**
+     * params: since (optional) - the revision from a previous getState. With it, "tiles" lists only
+     * the tiles that changed since then ("full": false); without it (or if it's stale) every tile.
+     */
+    private fun getState(params: JsonObject): JsonElement {
+        val game = game()
+        val since = params.int("since")
+        val tileCount = game.tileMap.tileList.size
+        val full = since == null || since != stateRevision || sentTiles.size != tileCount
+        if (sentTiles.size != tileCount) sentTiles = arrayOfNulls(tileCount)
+        val state = StateWriter.state(game, viewer()) { index, json ->
+            val changed = sentTiles[index] != json
+            sentTiles[index] = json
+            full || changed
+        }
+        stateRevision++
+        return JsonObject(state + mapOf(
+            "revision" to JsonPrimitive(stateRevision),
+            "full" to JsonPrimitive(full),
+        ))
+    }
+
     private fun ping(): JsonElement = buildJsonObject {
         put("protocol", BridgeMain.PROTOCOL_VERSION)
         put("uncivVersion", UncivGame.VERSION.text)
         put("gameRunning", gameInfo != null)
     }
 
-    /** What newGame accepts: rulesets, nations, map sizes, difficulties. */
+    /** What newGame accepts: every setup option and its allowed values (for the given ruleset). */
     private fun listOptions(params: JsonObject): JsonElement {
         val rulesetName = params.str("ruleset") ?: BaseRuleset.Civ_V_GnK.fullName
         val ruleset = RulesetCache[rulesetName] ?: throw BridgeException("Unknown ruleset '$rulesetName'")
@@ -128,78 +228,303 @@ class GameSession {
                         put("leader", it.leaderName)
                         put("outerColor", it.getOuterColor().toString())
                         put("innerColor", it.getInnerColor().toString())
+                        put("uniqueName", it.uniqueName)
+                        put("uniqueText", it.uniqueText.ifEmpty { it.uniques.joinToString("\n") })
                     }
                 }
             }
+            put("cityStatesAvailable", ruleset.nations.values.count { it.isCityState })
             putJsonArray("difficulties") { ruleset.difficulties.keys.forEach { add(it) } }
+            putJsonArray("speeds") { ruleset.speeds.keys.forEach { add(it) } }
+            putJsonArray("eras") { ruleset.eras.keys.forEach { add(it) } }
+            putJsonArray("victoryTypes") { ruleset.selectableVictories().forEach { add(it.name) } }
             putJsonArray("mapSizes") { MapSize.Predefined.entries.forEach { add(it.name) } }
             putJsonArray("mapShapes") { MapShape.allValues.forEach { add(it) } }
+            putJsonArray("mapTypes") { MapType.allValues.forEach { add(it) } }
+            putJsonArray("mapResources") { MapResourceSetting.activeLabels().forEach { add(it) } }
         }
     }
 
+    /** The setup used last time (what "Quick start" plays), or the defaults. Same fields newGame takes. */
+    private fun getSetup(): JsonElement = buildJsonObject {
+        val saved = try {
+            if (BridgeMain.lastSetupFile.isFile) Json.parseToJsonElement(BridgeMain.lastSetupFile.readText()).jsonObject else null
+        } catch (ex: Exception) {
+            System.err.println("Ignoring unreadable ${BridgeMain.lastSetupFile}: $ex")
+            null
+        }
+        put("isLastSetup", saved != null)
+        put("setup", JsonObject(DEFAULT_SETUP + (saved ?: emptyMap())))
+    }
+
     /**
-     * params (all optional): civ, ruleset, mapSize ("Tiny".."Huge"), mapShape, mapType,
-     * aiPlayers (default 3), cityStates (default 4), difficulty (default "Prince"), seed, noBarbarians
+     * Starts a new game. params, all optional (see getSetup for the defaults and listOptions for allowed values):
+     * civ ("Random" or a nation), ruleset, difficulty, speed, startingEra, aiPlayers, cityStates, victoryTypes[],
+     * mapSize, mapShape, mapType, mapResources, noRuins, noNaturalWonders, noBarbarians, ragingBarbarians,
+     * oneCityChallenge, noCityRazing, nuclearWeapons, espionage, seed.
+     * The choices are remembered for getSetup ("Quick start").
      */
     private fun newGame(params: JsonObject): JsonElement {
-        val rulesetName = params.str("ruleset") ?: BaseRuleset.Civ_V_GnK.fullName
+        val p = JsonObject(DEFAULT_SETUP + params)
+        val rulesetName = p.str("ruleset") ?: BaseRuleset.Civ_V_GnK.fullName
         val ruleset = RulesetCache[rulesetName] ?: throw BridgeException("Unknown ruleset '$rulesetName'")
         val majorNations = ruleset.nations.values.filter { it.isMajorCiv }.map { it.name }
-        val civ = params.str("civ") ?: majorNations.random()
+        val requestedCiv = p.str("civ") ?: RANDOM
+        val civ = if (requestedCiv == RANDOM) majorNations.random() else requestedCiv
         if (civ !in majorNations) throw BridgeException("Unknown nation '$civ'")
-        val difficulty = params.str("difficulty") ?: "Prince"
-        if (difficulty !in ruleset.difficulties) throw BridgeException("Unknown difficulty '$difficulty'")
-        val aiPlayers = (params.int("aiPlayers") ?: 3).coerceIn(1, majorNations.size - 1)
+        fun choice(key: String, allowed: Collection<String>): String {
+            val value = p.requireStr(key)
+            if (value !in allowed) throw BridgeException("Unknown $key '$value' - one of ${allowed.joinToString()}")
+            return value
+        }
+        val difficulty = choice("difficulty", ruleset.difficulties.keys)
+        val speed = choice("speed", ruleset.speeds.keys)
+        val era = choice("startingEra", ruleset.eras.keys)
+        val mapType = choice("mapType", MapType.allValues)
+        val mapShape = choice("mapShape", MapShape.allValues)
+        val mapResources = choice("mapResources", MapResourceSetting.activeLabels())
+        val aiPlayers = (p.int("aiPlayers") ?: 3).coerceIn(1, majorNations.size - 1)
+        val cityStates = (p.int("cityStates") ?: 4).coerceIn(0, ruleset.nations.values.count { it.isCityState })
+        val selectable = ruleset.selectableVictories().map { it.name }
+        val victories = (p["victoryTypes"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            ?.filter { it in selectable }?.takeIf { it.isNotEmpty() } ?: selectable
 
         val setup = GameSetupInfo()
         setup.gameParameters.apply {
             baseRuleset = rulesetName
             this.difficulty = difficulty
+            this.speed = speed
+            startingEra = era
             players = ArrayList<Player>().apply {
                 add(Player(civ, PlayerType.Human))
                 repeat(aiPlayers) { add(Player()) } // random AI nations
             }
-            numberOfCityStates = params.int("cityStates") ?: 4
-            minNumberOfCityStates = numberOfCityStates
-            maxNumberOfCityStates = numberOfCityStates
-            noBarbarians = params.bool("noBarbarians") ?: false
+            numberOfCityStates = cityStates
+            minNumberOfCityStates = cityStates
+            maxNumberOfCityStates = cityStates
+            victoryTypes = ArrayList(victories)
+            noBarbarians = p.bool("noBarbarians") ?: false
+            ragingBarbarians = p.bool("ragingBarbarians") ?: false
+            oneCityChallenge = p.bool("oneCityChallenge") ?: false
+            noCityRazing = p.bool("noCityRazing") ?: false
+            nuclearWeaponsEnabled = p.bool("nuclearWeapons") ?: true
+            espionageEnabled = p.bool("espionage") ?: false
         }
         setup.mapParameters.apply {
-            mapSize = when (params.str("mapSize") ?: "Tiny") {
-                "Tiny" -> MapSize.Tiny
-                "Small" -> MapSize.Small
-                "Medium" -> MapSize.Medium
-                "Large" -> MapSize.Large
-                "Huge" -> MapSize.Huge
-                else -> throw BridgeException("Unknown map size - use Tiny, Small, Medium, Large or Huge")
-            }
-            shape = params.str("mapShape") ?: MapShape.hexagonal
-            params.str("mapType")?.let { type = it }
-            worldWrap = false // keeps phase-0 rendering simple
-            params.long("seed")?.let { seed = it }
+            mapSize = MapSize(MapSize.Predefined.entries.firstOrNull { it.name == p.str("mapSize") }
+                ?: throw BridgeException("Unknown map size - use ${MapSize.Predefined.entries.joinToString { it.name }}"))
+            shape = mapShape
+            type = mapType
+            this.mapResources = mapResources
+            noRuins = p.bool("noRuins") ?: false
+            noNaturalWonders = p.bool("noNaturalWonders") ?: false
+            worldWrap = false // the table doesn't draw wrapped maps yet
+            p.long("seed")?.let { seed = it }
         }
 
         val game = GameStarter.startNewGame(setup)
-        game.gameParameters.victoryTypes = ArrayList(game.ruleset.victories.keys)
         setGame(game)
+        autosaveEnabled = params.bool("remember") != false
+        // Remember the choices (not the seed, and "Random" stays random) for Quick start - unless told not to (tests)
+        if (params.bool("remember") != false) try {
+            BridgeMain.lastSetupFile.parentFile.mkdirs()
+            BridgeMain.lastSetupFile.writeText(JsonObject(p - "seed" - "remember" + ("civ" to JsonPrimitive(requestedCiv))).toString())
+        } catch (ex: Exception) {
+            System.err.println("Couldn't remember the setup: $ex")
+        }
         return StateWriter.summary(game, viewer())
     }
 
-    /** params: path - an Unciv save file (e.g. from the desktop game's SaveFiles folder) */
+    /** Saves in the bridge's own folder (newest first): name, modified (ms since 1970), autosave. */
+    private fun listSaves(): JsonElement = buildJsonObject {
+        put("folder", BridgeMain.savesDir.absolutePath)
+        putJsonArray("saves") {
+            val files = BridgeMain.savesDir.listFiles()?.filter { it.isFile } ?: emptyList()
+            for (file in files.sortedByDescending { it.lastModified() }) {
+                addJsonObject {
+                    put("name", file.name)
+                    put("modified", file.lastModified())
+                    put("autosave", file.name.startsWith(AUTOSAVE))
+                }
+            }
+        }
+    }
+
+    /** params: name (from listSaves) or path - any Unciv save file (e.g. from the desktop game's SaveFiles folder) */
     private fun loadGame(params: JsonObject): JsonElement {
-        val file = File(params.requireStr("path"))
-        if (!file.isFile) throw BridgeException("No such file: ${file.absolutePath}")
+        val file = params.str("name")?.let { File(BridgeMain.savesDir, File(it).name) } ?: File(params.requireStr("path"))
+        if (!file.isFile) throw BridgeException("No such save: ${file.absolutePath}")
         val game = UncivFiles.gameInfoFromString(file.readText())
         setGame(game)
+        autosaveEnabled = true
         return StateWriter.summary(game, viewer())
     }
 
-    /** params: path. Writes a normal Unciv save that the desktop game can open. */
+    /** params: name (saved in the bridge's folder, see listSaves) or path. Writes a normal Unciv save the desktop game can open. */
     private fun saveGame(params: JsonObject): JsonElement {
-        val file = File(params.requireStr("path"))
+        val file = params.str("name")?.let { File(BridgeMain.savesDir, File(it).name) } ?: File(params.requireStr("path"))
         file.absoluteFile.parentFile?.mkdirs()
         file.writeText(UncivFiles.gameInfoToString(game(), forceZip = true))
         return buildJsonObject { put("path", file.absolutePath) }
+    }
+
+    // region policies and diplomacy
+
+    /** The policy tree from your point of view. */
+    private fun getPolicies(): JsonElement = StateWriter.policies(viewer())
+
+    /** params: policy - a branch name (opens it) or a policy in an open branch. Same rules as Unciv's policy screen. */
+    private fun adoptPolicy(params: JsonObject): JsonElement {
+        val civ = viewer()
+        val name = params.requireStr("policy")
+        val policy = civ.gameInfo.ruleset.policies[name] ?: throw BridgeException("Unknown policy '$name'")
+        val pickable = civ.isCurrentPlayer() && !civ.isDefeated() && !civ.policies.isAdopted(name)
+            && policy.policyBranchType != PolicyBranchType.BranchComplete
+            && civ.policies.isAdoptable(policy) && civ.policies.canAdoptPolicy()
+        if (!pickable) throw BridgeException(
+            if (!civ.policies.canAdoptPolicy()) "Not enough culture for a new policy yet" else "$name can't be adopted right now")
+        civ.policies.adopt(policy)
+        return StateWriter.policies(civ)
+    }
+
+    /** Every civ you've met: status, mood, influence, score, and whether you can declare war or offer peace. */
+    private fun getDiplomacy(): JsonElement = StateWriter.diplomacy(viewer())
+
+    private fun findKnownCiv(params: JsonObject): Civilization {
+        val name = params.requireStr("civ")
+        return viewer().getKnownCivs().firstOrNull { it.civName == name } ?: throw BridgeException("You haven't met $name")
+    }
+
+    /** params: civ. Declares war on a civ you've met (when no peace treaty is still running). */
+    private fun declareWar(params: JsonObject): JsonElement {
+        val other = findKnownCiv(params)
+        val diplomacy = viewer().getDiplomacyManager(other)!!
+        if (viewer().isAtWarWith(other)) throw BridgeException("You're already at war with ${other.civName}")
+        if (diplomacy.turnsToPeaceTreaty() > 0) throw BridgeException("Your peace treaty with ${other.civName} runs ${diplomacy.turnsToPeaceTreaty()} more turns")
+        if (!diplomacy.canDeclareWar()) throw BridgeException("You can't declare war on ${other.civName}")
+        diplomacy.declareWar()
+        return StateWriter.diplomacy(viewer())
+    }
+
+    /**
+     * params: civ. Proposes peace. City-states accept (as in Unciv's diplomacy screen); a major civ
+     * weighs it the way its AI weighs any trade. Result: accepted, message, and the updated diplomacy.
+     */
+    private fun offerPeace(params: JsonObject): JsonElement {
+        val civ = viewer()
+        val other = findKnownCiv(params)
+        if (!civ.isAtWarWith(other)) throw BridgeException("You're not at war with ${other.civName}")
+        if (other.getDiplomacyManager(civ)?.hasFlag(DiplomacyFlags.DeclaredWar) == true)
+            throw BridgeException("${other.civName} won't talk peace so soon after the war was declared")
+        if (civ.getDiplomacyManager(other)?.hasFlag(DiplomacyFlags.DeclinedPeace) == true)
+            throw BridgeException("${other.civName} turned down peace recently - try again in a few turns")
+        // From the other side's point of view: both sides offer a peace treaty
+        val logic = TradeLogic(other, civ)
+        logic.currentTrade.ourOffers.add(TradeOffer(Constants.peaceTreaty, TradeOfferType.Treaty, speed = civ.gameInfo.speed))
+        logic.currentTrade.theirOffers.add(TradeOffer(Constants.peaceTreaty, TradeOfferType.Treaty, speed = civ.gameInfo.speed))
+        val accepted = other.isCityState || TradeEvaluation().isTradeAcceptable(logic.currentTrade, other, civ)
+        if (accepted) logic.acceptTrade()
+        else civ.getDiplomacyManager(other)?.setFlag(DiplomacyFlags.DeclinedPeace, 3)
+        return buildJsonObject {
+            put("accepted", accepted)
+            put("message", if (accepted) "${other.civName} agrees to peace." else "${other.civName} refuses peace for now.")
+            put("diplomacy", StateWriter.diplomacy(civ))
+        }
+    }
+
+    // endregion
+
+    // region trade
+
+    /** A major civ you've met that you can trade with. */
+    private fun findTradePartner(params: JsonObject): Civilization {
+        val other = findKnownCiv(params)
+        if (other.isCityState) throw BridgeException("City-states don't trade like this")
+        if (other.isDefeated()) throw BridgeException("${other.civName} is gone")
+        return other
+    }
+
+    /** params: civ. What each side could put on the table. */
+    private fun getTradeOptions(params: JsonObject): JsonElement {
+        val civ = viewer()
+        val other = findTradePartner(params)
+        val logic = TradeLogic(civ, other)
+        return buildJsonObject {
+            put("civ", other.civName)
+            put("yourGold", civ.gold)
+            put("theirGold", other.gold)
+            putJsonArray("ours") { for (offer in logic.ourAvailableOffers) addJsonObject { StateWriter.writeOffer(this, offer, civ.gameInfo) } }
+            putJsonArray("theirs") { for (offer in logic.theirAvailableOffers) addJsonObject { StateWriter.writeOffer(this, offer, civ.gameInfo) } }
+        }
+    }
+
+    /**
+     * Builds the trade described by params ours[] / theirs[] ({name, type, amount}, picked from getTradeOptions).
+     * Amounts are clamped to what's available.
+     */
+    private fun buildTrade(params: JsonObject, civ: Civilization, other: Civilization): TradeLogic {
+        val logic = TradeLogic(civ, other)
+        fun pick(key: String, available: List<TradeOffer>, into: MutableList<TradeOffer>) {
+            val wanted = params[key] as? JsonArray ?: return
+            for (element in wanted) {
+                val item = element as? JsonObject ?: continue
+                val name = item.requireStr("name")
+                val type = item.requireStr("type")
+                val offer = available.firstOrNull { it.name == name && it.type.name == type }
+                    ?: throw BridgeException("$name isn't on the table")
+                val amount = (item.int("amount") ?: offer.amount).coerceIn(1, maxOf(1, offer.amount))
+                into.add(offer.copy(amount = amount))
+            }
+        }
+        pick("ours", logic.ourAvailableOffers, logic.currentTrade.ourOffers)
+        pick("theirs", logic.theirAvailableOffers, logic.currentTrade.theirOffers)
+        return logic
+    }
+
+    /** params: civ, ours[], theirs[]. Whether they'd take it, judged the way their AI judges trades. */
+    private fun evaluateTrade(params: JsonObject): JsonElement {
+        val civ = viewer()
+        val other = findTradePartner(params)
+        val logic = buildTrade(params, civ, other)
+        val fromTheirSide = logic.currentTrade.reverse()
+        val value = TradeEvaluation().getTradeAcceptability(fromTheirSide, other, civ, true)
+        return buildJsonObject {
+            val anything = logic.currentTrade.ourOffers.isNotEmpty() || logic.currentTrade.theirOffers.isNotEmpty()
+            put("acceptable", anything && value >= 0)
+            put("value", if (value == Int.MIN_VALUE) -999999 else value)
+        }
+    }
+
+    /** params: civ, ours[], theirs[]. They decide right away (Unciv would let them decide on their turn). */
+    private fun proposeTrade(params: JsonObject): JsonElement {
+        val civ = viewer()
+        val other = findTradePartner(params)
+        val logic = buildTrade(params, civ, other)
+        if (logic.currentTrade.ourOffers.isEmpty() && logic.currentTrade.theirOffers.isEmpty())
+            throw BridgeException("Put something on the table first")
+        val accepted = TradeEvaluation().isTradeAcceptable(logic.currentTrade.reverse(), other, civ)
+        if (accepted) logic.acceptTrade()
+        return buildJsonObject {
+            put("accepted", accepted)
+            put("message", if (accepted) "${other.civName} accepts the deal." else "${other.civName} turns the deal down.")
+            put("diplomacy", StateWriter.diplomacy(civ))
+        }
+    }
+
+    // endregion
+
+    /** Writes the "Autosave" in the background, from a copy so the game can carry on meanwhile. */
+    private fun autosave() {
+        if (!autosaveEnabled) return
+        val copy = try { game().clone() } catch (ex: Exception) { System.err.println("Autosave skipped: $ex"); return }
+        thread(name = "autosave", isDaemon = true) {
+            try {
+                BridgeMain.savesDir.mkdirs()
+                File(BridgeMain.savesDir, AUTOSAVE).writeText(UncivFiles.gameInfoToString(copy, forceZip = true))
+            } catch (ex: Exception) {
+                System.err.println("Autosave failed: $ex")
+            }
+        }
     }
 
     /** params: unitId. Full details for one of your units, including where it can move this turn and what it can do. */
@@ -523,6 +848,7 @@ class GameSession {
             civView.tryAutomateAllUnits()
         }
         game.nextTurn()
+        autosave()
         val next = viewer()
         return buildJsonObject {
             put("turn", game.turns)

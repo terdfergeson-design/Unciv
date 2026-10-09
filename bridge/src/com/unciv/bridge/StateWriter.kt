@@ -45,8 +45,11 @@ object StateWriter {
         put("mapRadius", game.tileMap.mapParameters.mapSize.radius)
     }
 
-    /** Everything the client needs to draw the world and the player's empire. */
-    fun state(game: GameInfo, viewer: Civilization): JsonObject {
+    /**
+     * Everything the client needs to draw the world and the player's empire.
+     * [includeTile] gets each tile's index and JSON and decides whether it goes out (for delta updates).
+     */
+    fun state(game: GameInfo, viewer: Civilization, includeTile: (Int, JsonObject) -> Boolean = { _, _ -> true }): JsonObject {
         val gameView = GameView(game, viewer)
         val civView = gameView.civView
         return buildJsonObject {
@@ -66,6 +69,10 @@ object StateWriter {
                 put("currentTech", civView.currentTechnologyName())
                 put("canResearch", civView.canResearchTech())
                 put("freeTechs", viewer.tech.freeTechs)
+                put("culturePoints", viewer.policies.storedCulture)
+                put("cultureForNextPolicy", viewer.policies.getCultureNeededForNextPolicy())
+                put("faithPoints", viewer.religionManager.storedFaith)
+                put("population", viewer.cities.sumOf { it.population.population })
             }
 
             putJsonArray("civs") {
@@ -74,6 +81,8 @@ object StateWriter {
                     val known = civ == viewer || viewer.knows(civ)
                     addJsonObject {
                         put("name", civ.civName)
+                        put("nation", civ.nation.name)
+                        civ.nation.cityStateType?.let { put("cityStateType", it) }
                         put("known", known)
                         put("outerColor", civ.nation.getOuterColor().toString())
                         put("innerColor", civ.nation.getInnerColor().toString())
@@ -86,8 +95,9 @@ object StateWriter {
             }
 
             putJsonArray("tiles") {
-                for (tile in game.tileMap.tileList) {
-                    addJsonObject { writeTile(gameView.getTile(tile), gameView) }
+                for ((index, tile) in game.tileMap.tileList.withIndex()) {
+                    val json = buildJsonObject { writeTile(gameView.getTile(tile), gameView) }
+                    if (includeTile(index, json)) add(json)
                 }
             }
 
@@ -141,6 +151,7 @@ object StateWriter {
             }
         }
         tile.getOwner()?.let { put("owner", it.civName) }
+        if (tile.getOwner()?.civName == gameView.civView.civName && tile.isWorked()) put("worked", true)
 
         if (tile.isCityCenter()) {
             tile.owningCity()?.let { city ->
@@ -163,6 +174,26 @@ object StateWriter {
         }
     }
 
+    /** One tile in detail, for the tile-info panel: the getState fields plus yields and defence. */
+    fun tileDetails(game: GameInfo, viewer: Civilization, tile: com.unciv.logic.map.tile.Tile): JsonObject {
+        val gameView = GameView(game, viewer)
+        val tileView = gameView.getTile(tile)
+        return buildJsonObject {
+            writeTile(tileView, gameView)
+            if (!tileView.isExplored()) return@buildJsonObject
+            try {
+                writeStats("yields", tileView.getTileStats(gameView.civView))
+            } catch (ex: Exception) {
+                System.err.println("No yields for tile ${tile.position}: $ex")
+            }
+            put("defenseBonus", (tileView.getDefensiveBonus() * 100).toInt())
+            put("impassable", tileView.isImpassible())
+            put("worked", tileView.isWorked())
+            tileView.getWorkingCity()?.let { put("workedBy", it.name) }
+            put("pillaged", tileView.isPillaged())
+        }
+    }
+
     private fun JsonObjectBuilder.writeForeignUnit(unit: ForeignMapUnitView) {
         put("id", unit.id)
         put("name", unit.getBaseUnit().name)
@@ -171,6 +202,21 @@ object StateWriter {
         put("civilian", unit.isCivilian())
         put("embarked", unit.isEmbarked())
         put("fortified", unit.isFortified())
+        put("unitType", unit.getBaseUnit().unitType)
+        // Where it has been lately, for the unit-movements map overlay (oldest first, then where it is now)
+        val memories = unit.getMovementMemories()
+        if (memories.isNotEmpty()) putJsonArray("moves") {
+            for (memory in memories) addJsonObject {
+                put("x", memory.position.x)
+                put("y", memory.position.y)
+                put("type", memory.type.name)
+            }
+            addJsonObject {
+                put("x", unit.getTile().position().x)
+                put("y", unit.getTile().position().y)
+                put("type", unit.getMostRecentMoveType().name)
+            }
+        }
     }
 
     private fun JsonObjectBuilder.writeOwnUnit(unit: MapUnitView) {
@@ -362,6 +408,12 @@ object StateWriter {
     /** The whole tech tree from [civ]'s point of view, plus what's being researched. */
     fun techs(civ: Civilization): JsonObject = buildJsonObject {
         val techs = civ.tech
+        val index = try {
+            com.unciv.ui.objectdescriptions.TechnologyDescriptions.buildTechIconsIndex(civ.gameInfo.ruleset, civ)
+        } catch (ex: Exception) {
+            System.err.println("No tech unlock index: $ex")
+            null
+        }
         put("current", techs.currentTechnologyName())
         put("freeTechs", techs.freeTechs)
         put("sciencePerTurn", civ.stats.statsForNextTurn.science)
@@ -380,9 +432,143 @@ object StateWriter {
                     put("queueIndex", techs.techsToResearch.indexOf(tech.name))
                     if (!techs.isResearched(tech.name)) put("turns", techs.turnsToTech(tech.name))
                     putJsonArray("prerequisites") { tech.prerequisites.forEach { add(it) } }
+                    // What it unlocks, like the little icons on Unciv's tech buttons
+                    if (index != null) putJsonArray("unlocks") {
+                        fun unlock(name: String, kind: String) = addJsonObject { put("name", name); put("kind", kind) }
+                        index.enabledUnitsByTech[tech.name]?.forEach { unlock(it.name, "unit") }
+                        index.enabledBuildingsByTech[tech.name]?.forEach { unlock(it.name, if (it.isAnyWonder()) "wonder" else "building") }
+                        index.resourcesByRevealedTech[tech.name]?.forEach { unlock(it.name, "resource") }
+                        index.improvementsByTechRequired[tech.name]?.forEach { unlock(it.name, "improvement") }
+                        index.obsoletedObjectsByTech[tech.name]?.forEach { unlock(it.name, "obsolete") }
+                    }
                 }
             }
         }
+    }
+
+    /** Unciv's full text about a tech: its effects and everything it enables or makes obsolete. */
+    fun techDescription(civ: Civilization, name: String): JsonObject = buildJsonObject {
+        val tech = civ.gameInfo.ruleset.technologies[name] ?: throw BridgeException("Unknown tech '$name'")
+        put("name", tech.name)
+        put("description", try {
+            com.unciv.ui.objectdescriptions.TechnologyDescriptions.getDescription(tech, civ)
+        } catch (ex: Exception) {
+            tech.uniques.joinToString("\n")
+        })
+    }
+
+    /** Yields of the given tiles (explored ones only), for the tile-yields map overlay. */
+    fun yields(game: GameInfo, viewer: Civilization, positions: List<com.unciv.logic.map.HexCoord>): JsonObject {
+        val gameView = GameView(game, viewer)
+        return buildJsonObject {
+            putJsonArray("tiles") {
+                for (position in positions) {
+                    if (position !in game.tileMap) continue
+                    val tile = gameView.getTile(game.tileMap[position])
+                    if (!tile.isExplored()) continue
+                    val stats = try { tile.getTileStats(gameView.civView) } catch (_: Exception) { continue }
+                    addJsonObject {
+                        put("x", position.x)
+                        put("y", position.y)
+                        if (stats.food != 0f) put("food", stats.food.toInt())
+                        if (stats.production != 0f) put("production", stats.production.toInt())
+                        if (stats.gold != 0f) put("gold", stats.gold.toInt())
+                        if (stats.science != 0f) put("science", stats.science.toInt())
+                        if (stats.culture != 0f) put("culture", stats.culture.toInt())
+                        if (stats.faith != 0f) put("faith", stats.faith.toInt())
+                    }
+                }
+            }
+        }
+    }
+
+    /** The policy tree: culture, branches (with their policies) and what can be adopted now. */
+    fun policies(civ: Civilization): JsonObject = buildJsonObject {
+        val manager = civ.policies
+        put("culture", manager.storedCulture)
+        put("cultureNeeded", manager.getCultureNeededForNextPolicy())
+        put("freePolicies", manager.freePolicies)
+        put("canAdopt", manager.canAdoptPolicy())
+        put("culturePerTurn", civ.stats.statsForNextTurn.culture)
+        val canPickNow = civ.isCurrentPlayer() && !civ.isDefeated() && manager.canAdoptPolicy()
+        fun JsonObjectBuilder.writePolicy(policy: com.unciv.models.ruleset.Policy) {
+            put("name", policy.name)
+            put("row", policy.row)
+            put("column", policy.column)
+            putJsonArray("requires") { policy.requires?.forEach { add(it) } }
+            put("adopted", manager.isAdopted(policy.name))
+            put("available", manager.isAdoptable(policy))   // could be picked once you have the culture
+            put("pickable", canPickNow && manager.isAdoptable(policy))
+            put("isComplete", policy.policyBranchType == com.unciv.models.ruleset.Policy.PolicyBranchType.BranchComplete)
+            put("description", try { policy.getDescription() } catch (_: Exception) { policy.uniques.joinToString("\n") })
+        }
+        putJsonArray("branches") {
+            for (branch in civ.gameInfo.ruleset.policyBranches.values) {
+                addJsonObject {
+                    writePolicy(branch)
+                    put("era", branch.era)
+                    putJsonArray("policies") {
+                        for (policy in branch.policies) addJsonObject { writePolicy(policy) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Every civ [viewer] has met: status, how they feel, influence (city-states), score, and possible actions. */
+    fun diplomacy(viewer: Civilization): JsonObject = buildJsonObject {
+        put("yourScore", viewer.calculateTotalScore().toInt())
+        putJsonArray("civs") {
+            for (other in viewer.getKnownCivs().sortedWith(compareBy({ it.isCityState }, { it.civName }))) {
+                if (other.isSpectator() || other.isBarbarian) continue
+                val ours = viewer.getDiplomacyManager(other) ?: continue
+                val theirs = other.getDiplomacyManager(viewer)
+                addJsonObject {
+                    put("name", other.civName)
+                    put("nation", other.nation.name)
+                    put("leader", try { other.getLeaderDisplayName() } catch (_: Exception) { other.nation.leaderName })
+                    put("outerColor", other.nation.getOuterColor().toString())
+                    put("innerColor", other.nation.getInnerColor().toString())
+                    put("isCityState", other.isCityState)
+                    put("alive", !other.isDefeated())
+                    put("atWar", viewer.isAtWarWith(other))
+                    put("status", ours.diplomaticStatus.name)
+                    put("relationship", try { ours.relationshipLevel().name } catch (_: Exception) { "Neutral" })
+                    if (theirs != null && !other.isCityState) put("opinionOfYou", theirs.opinionOfOtherCiv().toInt())
+                    if (other.isCityState) {
+                        theirs?.let { put("influence", it.getInfluence().toInt()) }
+                        other.allyCiv?.let { put("ally", it.civName) }
+                        put("personality", other.cityStatePersonality.name)
+                        other.nation.cityStateType?.let { put("cityStateType", it) }
+                    }
+                    put("score", other.calculateTotalScore().toInt())
+                    put("cities", other.cities.size)
+                    put("turnsOfPeaceTreatyLeft", ours.turnsToPeaceTreaty())
+                    put("canDeclareWar", !viewer.isAtWarWith(other) && ours.turnsToPeaceTreaty() <= 0 && ours.canDeclareWar())
+                    put("canOfferPeace", viewer.isAtWarWith(other)
+                        && theirs?.hasFlag(com.unciv.logic.civilization.diplomacy.DiplomacyFlags.DeclaredWar) != true
+                        && !ours.hasFlag(com.unciv.logic.civilization.diplomacy.DiplomacyFlags.DeclinedPeace))
+                }
+            }
+        }
+    }
+
+    /** One trade item: name and type (send these back), a readable label, amount and duration (turns, -1 = once). */
+    fun writeOffer(builder: JsonObjectBuilder, offer: com.unciv.logic.trade.TradeOffer, game: GameInfo) = with(builder) {
+        put("name", offer.name)
+        put("type", offer.type.name)
+        put("amount", offer.amount)
+        put("duration", offer.duration)
+        fun civName(id: String) = game.civilizations.firstOrNull { it.civID == id }?.civName ?: id
+        put("label", when (offer.type) {
+            com.unciv.logic.trade.TradeOfferType.City ->
+                game.getCities().firstOrNull { it.id == offer.name }?.let { "${it.name} (${it.population.population})" } ?: "A city"
+            com.unciv.logic.trade.TradeOfferType.WarDeclaration -> "Declare war on ${civName(offer.name)}"
+            com.unciv.logic.trade.TradeOfferType.PeaceProposal -> "Make peace with ${civName(offer.name)}"
+            com.unciv.logic.trade.TradeOfferType.Introduction -> "Introduction to ${civName(offer.name)}"
+            else -> offer.name
+        })
+        put("countable", offer.type.numberType != com.unciv.logic.trade.TradeOfferType.TradeTypeNumberType.None)
     }
 
     /** Static ruleset data the client needs for rendering: terrain colors, resource and unit lists. */

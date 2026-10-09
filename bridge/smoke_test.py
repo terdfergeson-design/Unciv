@@ -37,7 +37,8 @@ def main():
     options = b.call("listOptions")
     print("nations:", [n["name"] for n in options["nations"]][:6], "...")
 
-    print("newGame:", b.call("newGame", civ="Rome", mapSize="Tiny", aiPlayers=2, cityStates=2, seed=42))
+    print("setup:", b.call("getSetup"))
+    print("newGame:", b.call("newGame", civ="Rome", mapSize="Tiny", aiPlayers=2, cityStates=2, seed=42, remember=False))
 
     rules = b.call("getRuleset")
     print("terrains:", list(rules["terrains"])[:8], "...")
@@ -68,9 +69,12 @@ def main():
 
     state = b.call("getState")
     print("cities:", state["cities"])
+    delta = b.call("getState", since=state["revision"])
+    print(f"delta getState: full={delta['full']}, {len(delta['tiles'])} of {len(state['tiles'])} tiles resent")
     save_path = os.path.join(tempfile.gettempdir(), "unciv-bridge-smoke-test.save")
     print("saved:", b.call("saveGame", path=save_path))
     print("loaded:", b.call("loadGame", path=save_path))
+    print("saves:", b.call("listSaves"))
     print("\nAll good.")
 
 
