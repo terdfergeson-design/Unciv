@@ -249,6 +249,24 @@ object StateWriter {
         put("strength", unit.getBaseUnit().strength)
         put("rangedStrength", unit.getBaseUnit().rangedStrength)
         put("range", unit.getRange())
+        put("due", unit.due)
+        put("canPromote", unit.canBePromoted())
+        ownUnitAction(unit)?.let { put("action", it) }
+    }
+
+    /** What a unit of yours is doing, in the words of Unciv's unit list, or null when it waits for orders. */
+    private fun ownUnitAction(unit: MapUnitView): String? {
+        val building = unit.getImprovementInProgress()
+        return when {
+            unit.isFortified() -> "Fortified"
+            unit.isGuarding() -> "Guarding"
+            unit.isSleeping() -> "Sleeping"
+            unit.isExploring() -> "Exploring"
+            unit.isMoving() -> "Moving"
+            building != null && unit.canBuildCurrentImprovement() -> "Building $building"
+            unit.isAutomated() -> "Automated"
+            else -> null
+        }
     }
 
     /** One of the player's units, plus where it can go, what it can attack, what it can build and which actions it has. */

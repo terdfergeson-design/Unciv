@@ -75,6 +75,8 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v21** | | |
+| `getState` | | your units also carry `due` (still waiting for orders this turn), `canPromote`, and `action`: what the unit is doing in the words of Unciv's unit list (`Fortified`, `Guarding`, `Sleeping`, `Exploring`, `Moving`, `Building <improvement>`, `Automated`), left out when it is waiting for orders |
 | **v20** | | |
 | `getUnit` | | each action also carries `sound`: the name of the sound Unciv plays for it (`fortify`, `promote`, `chimes`, `click`...), a file in Unciv's `android/assets/sounds` |
 | `getCity` | | also `ambience`: the era's city noise (`cityAncient` ... `cityFuture`), which Unciv loops while you are in a city |
