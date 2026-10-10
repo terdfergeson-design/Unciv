@@ -17,7 +17,7 @@ import java.io.File
  * or simply `gradlew :bridge:run` from the repository root.
  */
 object BridgeMain {
-    const val PROTOCOL_VERSION = 21
+    const val PROTOCOL_VERSION = 22
 
     /** The bridge's own folder (saves, the last game setup): ~/.unciv-vr */
     val dataDir = File(System.getProperty("user.home"), ".unciv-vr")
@@ -43,6 +43,7 @@ object BridgeMain {
         }
 
         initUnciv()
+        Tutorials.load()
 
         val session = GameSession()
         // --exit-when-idle N: quit once no client has been connected for N seconds. The Godot client launches its

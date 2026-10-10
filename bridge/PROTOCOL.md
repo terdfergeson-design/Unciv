@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v16)
+# Unciv bridge protocol (v22)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
@@ -75,6 +75,14 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v22** | | |
+| `getCivilopedia` | – (works without a game too: then the Gods & Kings ruleset) | Unciv's Civilopedia categories, in its order: `ruleset`, `categories[{key, label, icon, entries[{name, label, sub?, rgb? (terrains), outer?, inner?, cityStateType? (nations), unit? (unit name groups)}]}]`. `key` is Unciv's CivilopediaCategories name (`Building`, `Unit`, `Technology`, `Tutorial`...); entries are sorted and filtered (hidden ones, religion when it's off) as Unciv's screen does, `sub` is the heading they go under |
+| `getCivilopediaEntry` | `link` (`Category/Name`, as Unciv's links: the category's key or label) | `category`, `name`, `link`, `lines[]`: Unciv's formatted lines, only the properties set: `text` (translated as Unciv shows it; Unciv's icon characters ⚙ ¤ ⁂ ⍾ ♪... included), `link` (another entry, or an https:// address), `icon` (an entry to draw the icon of), `extraImage` (a file in ExtraImages or an icon path), `imageSize`, `size`, `header` (1-8), `indent`, `padding`, `color` (`#rrggbb`), `separator`, `starred`, `centered`, `iconCrossed` |
+| `getState` | | `alerts` also bring Unciv's tutorials, after the game's own, one page at a time: `type` "Tutorial", `tutorial` (its name), `step`, `steps`, one option (`next`, or `close` on the last page). Answering the last page marks it seen. And `tutorialTask?{name, task, lines[], choices[{index, text}]}`: the first of Unciv's tutorial tasks (the "Tutorial Task: [...]" events) available now. Both only with `setSettings showTutorials`. The same goes for every reply that carries `blockers` and `alerts` |
+| `setSettings` | also `showTutorials` (off until a client turns it on), `resetTutorials` (forget what's been seen and done) | also `showTutorials` |
+| `showTutorial` | `name`: a TutorialTrigger (`CultureAndPolicies` when the policies open, `Experience` for promotions...) - shown once, if tutorials are on | `blockers`, `alerts`, `tutorialTask?` |
+| `tutorialTaskDone` | `task`: one the client sees done itself ("Enter city screen", "Open the options table", "See your stats breakdown"); the bridge marks moving a unit, founding a city, picking research or production, ending a turn and working a tile itself | `blockers`, `alerts`, `tutorialTask?` |
+| `chooseTutorialTask` | `name` (the task's event), `index` (from its `choices`) | `blockers`, `alerts`, `tutorialTask?` |
 | **v21** | | |
 | `getState` | | your units also carry `due` (still waiting for orders this turn), `canPromote`, and `action`: what the unit is doing in the words of Unciv's unit list (`Fortified`, `Guarding`, `Sleeping`, `Exploring`, `Moving`, `Building <improvement>`, `Automated`), left out when it is waiting for orders |
 | **v20** | | |
@@ -155,6 +163,7 @@ options with `needsTile` add `improvement` and `placeTiles[{x, y}]` (pass `tileX
 Colors are `rrggbbaa` hex strings (Godot: `Color.html(s)`).
 
 ## Notes and known gaps
+- What tutorials you've seen and which tasks you've done are kept in `~/.unciv-vr/tutorials.json`.
 - Worker improvements go through `buildImprovement` and promotions through `promote`.
 - Your automated units move when you end your turn (Unciv's "Move automated units" step), unless
   `setSettings` asks for the start of the turn instead.

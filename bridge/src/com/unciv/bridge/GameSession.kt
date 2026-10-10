@@ -232,7 +232,7 @@ class GameSession {
             StateWriter.constructionDescription(GameView(game(), viewer()).getCityView(city), params.requireStr("construction"))
         }
         // v16: closing the gameplay gaps
-        "answerAlert" -> {
+        "answerAlert" -> if (params.requireStr("key").startsWith("Tutorial|")) Tutorials.answer(params.requireStr("key")) else {
             val result = Alerts.answer(game(), viewer(), params.requireStr("key"), params.requireStr("option"))
             viewer().updateStatsForNextTurn()
             result
@@ -267,6 +267,15 @@ class GameSession {
         "promote" -> promote(params)
         "setSettings" -> setSettings(params)
         "endTurn" -> endTurn()
+        // v22: the Civilopedia and the tutorials
+        "getCivilopedia" -> Civilopedia.categories(gameInfo)
+        "getCivilopediaEntry" -> Civilopedia.entry(gameInfo, params.requireStr("link"))
+        "showTutorial" -> { Tutorials.show(params.requireStr("name")); turnStatus() }
+        "tutorialTaskDone" -> { Tutorials.done(params.requireStr("task")); turnStatus() }
+        "chooseTutorialTask" -> {
+            Tutorials.chooseTask(game(), viewer(), params.requireStr("name"), params.requireInt("index"))
+            turnStatus()
+        }
         else -> throw BridgeException("Unknown method '$method'")
     }
 
@@ -304,7 +313,12 @@ class GameSession {
             putJsonArray("blockers") {
                 for (blocker in Gameplay.blockers(game, civ, Alerts.countNeedingAnswer(game, civ), checkForDueUnits)) add(blocker)
             }
-            putJsonArray("alerts") { for (alert in Alerts.list(game, civ)) add(alert) }
+            Tutorials.check(game, civ)
+            putJsonArray("alerts") {
+                for (alert in Alerts.list(game, civ)) add(alert)
+                for (alert in Tutorials.alerts(game)) add(alert)   // after the game's own
+            }
+            Tutorials.task(game, civ)?.let { put("tutorialTask", it) }
         }
     }
 
@@ -834,6 +848,7 @@ class GameSession {
         val previousPosition = unit.getTile().position
         unitView.tryMoveToTile(tileToMoveTo)
         val moved = unit.getTile().position != previousPosition
+        if (moved) Tutorials.done(if (unit.baseUnit.isAirUnit()) "Move an air unit" else "Move unit")
         if (moved && (unitView.isExploring() || unitView.isMoving())) unitView.tryResetAction()
         // Not there yet (a far target, or no moves left this turn): keep heading there on later turns
         val queued = unit.getTile().position != target
@@ -895,7 +910,9 @@ class GameSession {
         val x = params.int("x")
         val y = params.int("y")
         val target = if (x != null && y != null) HexCoord(x, y) else null
-        return UnitOrders.run(unit, typeName, params.str("title"), target, params.bool("confirm") ?: false)
+        val result = UnitOrders.run(unit, typeName, params.str("title"), target, params.bool("confirm") ?: false)
+        if (typeName == UnitActionType.FoundCity.name && unit.isDestroyed) Tutorials.done("Found city")
+        return result
     }
 
     /** params: name (or x, y of the city); tileX, tileY - a tile from getCity().bombardTargets. The city shoots at it. */
@@ -946,7 +963,11 @@ class GameSession {
         params.int("notificationsLogMaxTurns")?.let { settings.notificationsLogMaxTurns = it.coerceIn(3, 15) }
         // Options > Advanced: autosave every so many turns
         params.int("turnsBetweenAutosaves")?.let { settings.turnsBetweenAutosaves = it.coerceAtLeast(1) }
+        // v22: Options > Display > Show tutorials, and Reset tutorials
+        params.bool("showTutorials")?.let { Tutorials.enabled = it }
+        if (params.bool("resetTutorials") == true) Tutorials.reset()
         return buildJsonObject {
+            put("showTutorials", Tutorials.enabled)
             for ((key, property) in flags) put(key, property.get())
             put("checkForDueUnits", checkForDueUnits)
             put("notificationsLogMaxTurns", settings.notificationsLogMaxTurns)
@@ -1004,6 +1025,7 @@ class GameSession {
             }
         } else cityView.tryAddToQueueConstruction(construction, addToTop = now)
         if (constructions.currentConstructionName() == name) cityView.tryReassignPopulation()
+        Tutorials.done("Pick construction")
         return StateWriter.cityDetails(cityView)
     }
 
@@ -1116,6 +1138,7 @@ class GameSession {
             "unlock" -> cityView.tryUnlockTile(tileView)
             else -> throw BridgeException("Unknown tile action '$action'")
         }
+        Tutorials.done("Reassign worked tiles")
         cityView.updateCityStats()
         return StateWriter.cityDetails(cityView)
     }
@@ -1137,6 +1160,7 @@ class GameSession {
             techs.techsToResearch = ArrayList(path.map { it.name })
         }
         techs.updateResearchProgress()
+        Tutorials.done("Pick technology")
         return StateWriter.techs(civ)
     }
 
@@ -1168,6 +1192,7 @@ class GameSession {
         }
         val before = TurnEvents.snapshot(game, player)
         game.nextTurn()
+        Tutorials.done("Pass a turn")
         if (game.turns % UncivGame.Current.settings.turnsBetweenAutosaves.coerceAtLeast(1) == 0) autosave()   // as Unciv
         val next = viewer()
         val events = try {
