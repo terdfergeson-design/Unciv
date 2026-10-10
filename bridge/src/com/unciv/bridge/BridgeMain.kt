@@ -17,7 +17,7 @@ import java.io.File
  * or simply `gradlew :bridge:run` from the repository root.
  */
 object BridgeMain {
-    const val PROTOCOL_VERSION = 15
+    const val PROTOCOL_VERSION = 16
 
     /** The bridge's own folder (saves, the last game setup): ~/.unciv-vr */
     val dataDir = File(System.getProperty("user.home"), ".unciv-vr")
@@ -29,6 +29,7 @@ object BridgeMain {
         val portIndex = args.indexOf("--port")
         val port = if (portIndex >= 0 && portIndex + 1 < args.size) args[portIndex + 1].toInt() else 8765
         val verbose = "--verbose" in args
+        DebugCommands.enabled = "--debug" in args
 
         // Quiet Unciv's debug logging unless asked for it
         Log.backend = object : DefaultLogBackend() {
@@ -44,7 +45,12 @@ object BridgeMain {
         initUnciv()
 
         val session = GameSession()
-        BridgeServer(port, session).run()
+        // --exit-when-idle N: quit once no client has been connected for N seconds. The Godot client launches its
+        // bridge with this, so a bridge orphaned by a crashed or force-stopped client doesn't keep running forever
+        // (and keep serving old code after an update).
+        val idleIndex = args.indexOf("--exit-when-idle")
+        val idleSeconds = if (idleIndex >= 0 && idleIndex + 1 < args.size) args[idleIndex + 1].toIntOrNull() ?: 0 else 0
+        BridgeServer(port, session, idleSeconds).run()
     }
 
     /** Same minimal setup as Unciv's own ConsoleLauncher / unit tests: no window, no GL, no Gdx.app. */
@@ -52,6 +58,9 @@ object BridgeMain {
         if (Gdx.files == null) Gdx.files = HeadlessFiles()
         val game = UncivGame(true) // console mode: rulesets are read straight from the working directory
         UncivGame.Current = game
+        // Some game events look up their sound file (ancient ruins rewards, for one); without this they'd throw.
+        // There's no audio here, so loading the sound itself then quietly fails, as Unciv expects when a file is missing.
+        game.files = com.unciv.logic.files.UncivFiles(Gdx.files)
         game.settings = GameSettings().apply {
             showTutorials = false
             turnsBetweenAutosaves = 10000

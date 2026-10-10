@@ -1,6 +1,10 @@
-# Unciv bridge protocol (v15)
+# Unciv bridge protocol (v16)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
+Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
+starts its bridge with 180 so an orphaned one doesn't linger), `--debug` (enables the `debug` method), `--verbose`.
+The bridge saves the running game as the autosave before it exits (on `shutdown` or when idle), unless the game
+was started with `remember: false`. Clients should compare `ping`'s `protocol` with the version they expect.
 
 ```
 → {"id": 1, "method": "moveUnit", "params": {"unitId": 12, "x": 3, "y": -2}}
@@ -30,10 +34,10 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `getRuleset` | – | `terrains{name: {type, rgb[r,g,b], impassable}}`, `resources{name: {type}}`, `units{name: {unitType, strength, rangedStrength, movement}}` |
 | `getState` | `since?` (a `revision` from an earlier getState) | see below. Adds `revision` and `full`; with a matching `since`, `full` is false and `tiles` holds only the tiles that changed (merge them by `x, y`) |
 | `getTile` | `x, y` | that tile as in `getState` plus (when explored) `yields{food, production, gold, science, culture, faith}`, `defenseBonus` (percent), `impassable`, `worked`, `workedBy?`, `pillaged` |
-| `getUnit` | `unitId` | own-unit fields + `reachable[{x,y}]` (this turn) + `actions[{type, title, enabled, current}]` + `targets[{x, y, fromX, fromY, name, civ, health, maxHealth, isCity, expectedDamageToDefender, expectedDamageToAttacker}]` + `improvements[{name, turns}]` + `tileWork{improvement, inProgress, turnsLeft}` + `xp, xpForNextPromotion, canPromote, promotions[]` + `promotionChoices[{name, description}]` (only when `canPromote`) |
+| `getUnit` | `unitId` | own-unit fields + `reachable[{x,y}]` (this turn) + `actions[{type, title, enabled, current, confirm?, target? ("tile"), targets?[{x,y}] (no list: any tile may be tried), destination?{x,y}}]` + `due`, `escorting`, `destination?` + `targets[{x, y, fromX, fromY, name, civ, health, maxHealth, isCity, expectedDamageToDefender, expectedDamageToAttacker, kind? (nuke / airSweep: any tile in range)}]` + `improvements[{name, turns}]` + `tileWork{improvement, inProgress, turnsLeft}` + `xp, xpForNextPromotion, canPromote, promotions[]` + `promotionChoices[{name, description}]` (only when `canPromote`) |
 | `moveUnit` | `unitId, x, y` | `moved`, `queued`, `x`, `y`, `movementLeft`. Moves as far as it can this turn; if it isn't there yet (`queued`), it keeps heading there on later turns |
 | `previewMove` | `unitId, x, y` | `canReach`, `turns`, `stops[{x, y}]` (where the unit ends each turn; the last is the target). Doesn't move anything |
-| `unitAction` | `unitId, action` (a type from `getUnit().actions`, e.g. `FoundCity`, `Fortify`, `Sleep`, `Explore`, `Skip`), `title?` | `done`, `unitStillExists` |
+| `unitAction` | `unitId, action` (a type from `getUnit().actions`, e.g. `FoundCity`, `Fortify`, `Sleep`, `Explore`, `Skip`, `DisbandUnit`, `SwapUnits`, `ConnectRoad`, `EscortFormation`, `Pillage`), `title?`, `x?, y?` (actions with `target: "tile"`), `confirm?` | `done` (false when the action has a `confirm` question and `confirm` wasn't true: then `confirm` holds the question), `action`, `unitStillExists` |
 | `attack` | `unitId, x, y` (a tile from `getUnit().targets`) | `attacked`, `defender`, `damageToDefender`, `damageToAttacker`, `attackerAlive`, `attackerHealth`, `defenderDefeated`, `defenderHealth`, `cityCaptured`, `x`, `y` (where the attacker ended up). Melee units move next to the target first if needed |
 | `buildImprovement` | `unitId, improvement` (a name from `getUnit().improvements`, including "Cancel improvement order") | `improvementInProgress`, `turnsLeft` |
 | `getCity` | `name` or `x, y` (own city) | `name, x, y, population, foodStored, foodToGrow, turnsToGrowth, turnsToStarvation, health, maxHealth, isCapital, isPuppet`, `yields{food, production, gold, science, culture, faith}`, `queue[{index, name, turns}]`, `buildings[]`, `options[{name, kind (unit/building/wonder/perpetual), turns, cost, buildable, goldCost?, canBuy?}]` |
@@ -68,11 +72,23 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `offerPeace` | `civ` | `accepted`, `message`, `diplomacy` (updated). City-states accept; major civs judge it like any AI trade, and a refusal blocks asking again for 3 turns |
 | `getTradeOptions` | `civ` (a major civ you have met) | `civ, yourGold, theirGold`, `ours[]` / `theirs[]`: `{name, type, label, amount, duration, countable}` - what each side could offer |
 | `evaluateTrade` | `civ`, `ours[]`, `theirs[]` (`{name, type, amount}` from getTradeOptions) | `acceptable`, `value` (their AI's view: >= 0 means yes; how far below 0 is roughly how much more they want) |
-| `proposeTrade` | same as evaluateTrade | `accepted`, `message`, `diplomacy`. They decide right away, with the same judgement their AI uses (Unciv itself lets them decide on their turn) |
+| `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
-| `setSettings` | optional `automatedUnitsMoveOnTurnStart` (bool) | the current settings. false (default): your automated units move when you end your turn; true: at the start of your next turn |
+| `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v16** | | |
+| `answerAlert` | `key`, `option` (from `getState().alerts`) | `message`; for a trade request's `counter`: also `civ`, `ours[]`, `theirs[]` (their offer, to put on the trade table) |
+| `dismissBlocker` | `type`: PickPolicy or MoveSpies (Unciv asks once; opening the screen dismisses it) | `blockers`, `alerts` |
+| `getGreatPersonChoices` / `chooseGreatPerson` | – / `unit` | `free`, `choices[{name, available, description}]` / `blockers`, `alerts` |
+| `getVoteChoices` / `vote` | – / `civ?` (none = abstain) | `canVote`, `civs[{name, nation}]` / `blockers`, `alerts` |
+| `getReligionChoices` | – | `mode` (pantheon / found / enhance / reform / null), `enabled`, `state`, `religion?`, `displayName?`, `currentBeliefs[{name, type}]`, `slots[]` (a belief type per pick), `pickIconAndName`, `icons?[{name, available}]`, `beliefs[{name, type, color, effects, available, why? (taken / yours / blocked)}]` |
+| `chooseReligion` | `beliefs[]` (one per slot, in order), when founding also `icon` and `name` | the updated `getReligionChoices` result |
+| `getVictory` / `oneMoreTurn` | – | Unciv's victory screen: `turn, speed, difficulty, maxTurns?, oneMoreTurnMode, defeated, winner?{civ, victoryType, turn, isYou, text}, defeatText?`, `ourStatus[{name, header, milestones[{status (completed / partial / incomplete), text, steps?[{text, done}]}]}]`, `global[{name, civs[{name, nation, known, isYou, defeated, milestonesDone, next}]}]`, `showRankings, showCharts, showDemographics`, `rankingTypes[]`, `rankings[{type, label, civs[{name, value, ...}]}]`, `history[{name, turns{turn: {type: value}}}]`, `demographics[{type, label, value, rank, best, bestCiv, average, worst, worstCiv}]` |
+| `diplomacyAction` | `civ`, `action`: giftGold (`gold` 250/500/1000), giftImprovement (`x, y, improvement`), pledgeProtection, revokeProtection, tribute (`kind` gold / worker), marriage, denounce, offerFriendship, makeDemand (`demand`) | `message`, `diplomacy` |
+| `cityAttack` | city, `tileX, tileY` (from `getCity().bombardTargets`) | `attacked`, `defender`, `damageToDefender`, `defenderDefeated`, `defenderHealth`, `city` (updated getCity) |
+| `getEspionage` / `moveSpy` / `stageCoup` | – / `spy`, `city?` (none = hideout), `confirm?` / `spy`, `confirm?` | `enabled`, `spies[{name, rank, action, location, x?, y?, turns?, alive, canCoup?, coupChance?, stagingCoup?}]`, `cities[{name, civ, x, y, isCityState, own, spies[], canMoveHere[], promiseWarning?}]` / `done` (false: `confirm` question), `espionage` |
+| `debug` | only when the bridge runs with `--debug` (tests): `command` (addStat, addTech, spawnUnit, freeGreatPerson, meet, war, cityHealth, reveal, popupAlert, votingFlag), ... | `result` |
 | `shutdown` | – | `shuttingDown`; the bridge exits right after replying (the client uses this for bridges it launched itself) |
-| `endTurn` | – (your automated / exploring units and multi-turn moves act first, then the AI players) | `turn`, `currentPlayer`, `yourTurn`, `gameOver`, `winner?`, `victoryType?`, `defeated`, `notifications[{text, category}]` |
+| `endTurn` | – (refused while `getState().blockers` isn't empty; messages that only had a close button are taken as read; your automated / exploring units and multi-turn moves act first, then the AI players) | `turn`, `currentPlayer`, `yourTurn`, `gameOver`, `winner?`, `victoryType?`, `defeated`, `notifications[{text, category}]` |
 
 ### `getState`
 ```
@@ -90,15 +106,31 @@ tiles:  [{x, y, wx, wy, explored,
         }],
 units:  [own units: {id, name, civ, health, civilian, embarked, fortified, x, y, movement,
           maxMovement, idle, sleeping, moving, automated, strength, rangedStrength, range}],
-cities: [own cities: {name, x, y, population, isCapital, health, maxHealth, producing, producingTurns, turnsToGrowth}]
+cities: [own cities: {name, x, y, population, isCapital, health, maxHealth, producing, producingTurns, turnsToGrowth,
+          isPuppet, isBeingRazed, canBombard}],
+// v16:
+blockers: [{type, text, ...}]   // what End turn waits for, in Unciv's order: AnswerAlerts, PickGreatPerson,
+          // PickConstruction (city, x, y), PickTech, PickPolicy, MoveSpies, FoundPantheon / ExpandPantheon /
+          // FoundReligion / EnhanceReligion / ReformReligion, WorldCongressVote, NextUnit (unitId, x, y; only
+          // with setSettings checkForDueUnits)
+alerts:   [{key, type, title, text, needsAnswer, civ?, nation?, leader?, isCityState?,
+           options[{id, label, description?, enabled}], ...}]  // Unciv's popups: first contact, war declared,
+          // demands, friendship offers, a conquered city (annex / puppet / raze / liberate), a recaptured
+          // civilian, wonders and techs, golden ages, World Congress results (votes), trade requests
+          // (theyGive[], youGive[]; accept / decline / counter), ...
 ```
+`getCity` (v16) also has `canBombard`, `bombardTargets[{x, y, name, civ, health, maxHealth, expectedDamageToDefender}]`;
+options with `needsTile` add `improvement` and `placeTiles[{x, y}]` (pass `tileX, tileY` to `setProduction` /
+`buyConstruction`), and queue entries for them carry `tile{x, y}`. The overview has an `espionage` tab
+(the `getEspionage` fields).
 Colors are `rrggbbaa` hex strings (Godot: `Color.html(s)`).
 
-## Known gaps (planned)
-- Unit actions that open one of Unciv's own popups or screens (disband, escort, swap) aren't available
-  yet. Worker improvements go through `buildImprovement` and promotions through `promote` instead.
+## Notes and known gaps
+- Worker improvements go through `buildImprovement` and promotions through `promote`.
 - Your automated units move when you end your turn (Unciv's "Move automated units" step), unless
   `setSettings` asks for the start of the turn instead.
-- Conquering a city lets Unciv's AI decide whether to annex, puppet or raze it (no popup yet).
-- Buildings that place an improvement on a chosen tile (`needsTile`) can't be built or bought through the bridge yet.
+- Conquering a city: without Unciv's world screen its battle code makes the AI's choice first; the
+  `CityConquered` alert then changes it to the player's. In the rare case the AI liberates the city
+  (a city-state's former city), it's simply liberated.
+- Map replay (the victory screen's Replay tab) isn't sent.
 - `getState` still builds every tile on the bridge side each call; only changed tiles go over the wire when `since` is used.

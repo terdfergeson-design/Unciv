@@ -231,6 +231,37 @@ class GameSession {
             val city = findOwnCity(params)
             StateWriter.constructionDescription(GameView(game(), viewer()).getCityView(city), params.requireStr("construction"))
         }
+        // v16: closing the gameplay gaps
+        "answerAlert" -> {
+            val result = Alerts.answer(game(), viewer(), params.requireStr("key"), params.requireStr("option"))
+            viewer().updateStatsForNextTurn()
+            result
+        }
+        "dismissBlocker" -> { Gameplay.dismiss(viewer(), params.requireStr("type")); turnStatus() }
+        "getGreatPersonChoices" -> Gameplay.greatPersonChoices(viewer())
+        "chooseGreatPerson" -> {
+            requireTurn()
+            Gameplay.chooseGreatPerson(viewer(), params.requireStr("unit"))
+            turnStatus()
+        }
+        "getVoteChoices" -> Gameplay.voteChoices(viewer())
+        "vote" -> { requireTurn(); Gameplay.vote(viewer(), params.str("civ")); turnStatus() }
+        "getReligionChoices" -> ReligionPicker.choices(viewer())
+        "chooseReligion" -> { requireTurn(); ReligionPicker.choose(viewer(), params) }
+        "getVictory" -> Gameplay.victory(game(), viewer())
+        "oneMoreTurn" -> { Gameplay.oneMoreTurn(game()); Gameplay.victory(game(), viewer()) }
+        "diplomacyAction" -> {
+            val message = DiplomacyActions.act(viewer(), findKnownCiv(params), params.requireStr("action"), params)
+            buildJsonObject {
+                put("message", message)
+                put("diplomacy", StateWriter.diplomacy(viewer()))
+            }
+        }
+        "cityAttack" -> cityAttack(params)
+        "getEspionage" -> Espionage.overview(viewer())
+        "moveSpy" -> { requireTurn(); Espionage.move(viewer(), params) }
+        "stageCoup" -> { requireTurn(); Espionage.coup(viewer(), params) }
+        "debug" -> DebugCommands.run(game(), viewer(), params)
         "getTechs" -> StateWriter.techs(viewer())
         "setResearch" -> setResearch(params)
         "promote" -> promote(params)
@@ -256,6 +287,25 @@ class GameSession {
         sentTiles = emptyArray()
         stateRevision++   // a client's old "since" no longer matches, so it gets the new map in full
         UncivGame.Current.gameInfo = game
+    }
+
+    private fun requireTurn() {
+        if (!viewer().isCurrentPlayer()) throw BridgeException("It isn't your turn")
+    }
+
+    /** Unciv's "check for idle units before ending the turn" (setSettings checkForDueUnits) */
+    private var checkForDueUnits = false
+
+    /** What still has to be decided this turn, and the pending messages. Also part of getState. */
+    private fun turnStatus(): JsonObject {
+        val game = game()
+        val civ = viewer()
+        return buildJsonObject {
+            putJsonArray("blockers") {
+                for (blocker in Gameplay.blockers(game, civ, Alerts.countNeedingAnswer(game, civ), checkForDueUnits)) add(blocker)
+            }
+            putJsonArray("alerts") { for (alert in Alerts.list(game, civ)) add(alert) }
+        }
     }
 
     private fun findOwnUnit(params: JsonObject): MapUnit {
@@ -292,7 +342,11 @@ class GameSession {
             full || changed
         }
         stateRevision++
-        return JsonObject(state + mapOf(
+        val status = try { turnStatus() } catch (ex: Exception) {
+            System.err.println("Turn status failed: $ex")
+            JsonObject(emptyMap())
+        }
+        return JsonObject(state + status + mapOf(
             "revision" to JsonPrimitive(stateRevision),
             "full" to JsonPrimitive(full),
         ))
@@ -591,16 +645,24 @@ class GameSession {
         val logic = buildTrade(params, civ, other)
         if (logic.currentTrade.ourOffers.isEmpty() && logic.currentTrade.theirOffers.isEmpty())
             throw BridgeException("Put something on the table first")
-        val accepted = TradeEvaluation().isTradeAcceptable(logic.currentTrade.reverse(), other, civ)
-        if (accepted) logic.acceptTrade()
-        return buildJsonObject {
-            put("accepted", accepted)
-            put("message", if (accepted) "${other.civName} accepts the deal." else "${other.civName} turns the deal down.")
-            put("diplomacy", StateWriter.diplomacy(civ))
-        }
+        requireTurn()
+        return DiplomacyActions.propose(civ, other, logic)
     }
 
     // endregion
+
+    /** Writes the "Autosave" right away (the bridge is about to exit), so a turn in progress isn't lost. */
+    fun saveBeforeExit() {
+        val game = gameInfo ?: return
+        if (!autosaveEnabled) return
+        try {
+            BridgeMain.savesDir.mkdirs()
+            File(BridgeMain.savesDir, AUTOSAVE).writeText(UncivFiles.gameInfoToString(game, forceZip = true))
+            println("Saved the game before exiting")
+        } catch (ex: Exception) {
+            System.err.println("Saving before exit failed: $ex")
+        }
+    }
 
     /** Writes the "Autosave" in the background, from a copy so the game can carry on meanwhile. */
     private fun autosave() {
@@ -625,13 +687,30 @@ class GameSession {
             it to if (it.name == Constants.cancelImprovementOrder) 0 else it.getTurnsToBuild(unit.civ, unit)
         }
         val promotionChoices = if (canPromoteNow(unit)) unit.promotions.getAvailablePromotions().toList() else emptyList()
-        return StateWriter.unitDetails(unitView, safeUnitActions(unit), attackTargets(unitView), improvements,
-            canPromoteNow(unit), promotionChoices)
+        return StateWriter.unitDetails(unitView, UnitOrders.list(unit), attackTargets(unitView), improvements,
+            canPromoteNow(unit), promotionChoices, specialTargets(unit, unitView))
+    }
+
+    /** Tiles a nuclear weapon could strike, or an air unit preparing an air sweep could sweep. */
+    private fun specialTargets(unit: MapUnit, unitView: MapUnitView): List<Pair<com.unciv.logic.map.tile.Tile, String>> {
+        if (!unitView.canAttack()) return emptyList()
+        return try {
+            when {
+                unit.isNuclearWeapon() -> unitView.getTilesInAttackRange().filter { unitView.mayUseNuke(it) }
+                    .map { game().tileMap[it.position()] to "nuke" }
+                unit.isPreparingAirSweep() -> unitView.getTilesInAttackRange().map { game().tileMap[it.position()] to "airSweep" }
+                else -> emptyList()
+            }
+        } catch (ex: Exception) {
+            System.err.println("Couldn't compute nuke / air sweep targets: $ex")
+            emptyList()
+        }
     }
 
     /** Everything [unitView] could attack this turn (moving first if needed), as Unciv's own UI computes it. */
     private fun attackTargets(unitView: MapUnitView): List<AttackableTileView> {
         if (!unitView.canAttack()) return emptyList()
+        if (unitView.isNuclearWeapon() || unitView.isPreparingAirSweep()) return emptyList()   // see specialTargets
         return try {
             unitView.getAttackableEnemies(unitView.getDistanceToTiles())
         } catch (ex: Exception) {
@@ -662,20 +741,42 @@ class GameSession {
         val target = HexCoord(params.requireInt("x"), params.requireInt("y"))
         val gameView = GameView(game, viewer())
         val unitView = gameView.getMapUnitView(unit)
-        if (!unitView.canAttack()) throw BridgeException("${unit.displayName()} can't attack right now")
+        if (!unitView.canAttack()) throw BridgeException("${Gameplay.plain(unit.displayName())} can't attack right now")
+        if (target !in game.tileMap) throw BridgeException("($target) is off the map")
+        val special = specialTargets(unit, unitView).firstOrNull { it.first.position == target }
+        if (special != null) {
+            val targetView = gameView.getTile(special.first)
+            if (special.second == "nuke") unitView.tryNuke(targetView) else unitView.tryAirSweep(targetView)
+            val alive = unit.civ.units.getCivUnits().any { it === unit }
+            return buildJsonObject {
+                put("attacked", true)
+                put("defender", if (special.second == "nuke") "Nuclear strike" else "Air sweep")
+                put("damageToDefender", 0)
+                put("damageToAttacker", 0)
+                put("attackerAlive", alive)
+                put("attackerHealth", if (alive) unit.health else 0)
+                put("defenderDefeated", false)
+                put("defenderHealth", 0)
+                put("cityCaptured", false)
+                put("x", unit.getTile().position.x)
+                put("y", unit.getTile().position.y)
+            }
+        }
         val attackable = attackTargets(unitView).firstOrNull { it.getTileToAttack().position() == target }
-            ?: throw BridgeException("${unit.displayName()} can't attack that tile")
+            ?: throw BridgeException("${Gameplay.plain(unit.displayName())} can't attack that tile")
         val defender = attackable.getCombatant()
         val defenderName = defender?.getCombatantName() ?: "target"
 
         if (!unitView.tryMovePreparingAttack(attackable))
             return buildJsonObject {
                 put("attacked", false)
-                put("message", "${unit.displayName()} moved into position but can't attack any more this turn")
+                put("message", "${Gameplay.plain(unit.displayName())} moved into position but can't attack any more this turn")
             }
         val damage = unitView.attackOrNuke(attackable)
         val attackerAlive = unit.civ.units.getCivUnits().any { it === unit }
         val targetTile = game.tileMap[target]
+        // Took a city: Unciv asks what to do with it (its battle code has already made the AI's choice - see Alerts)
+        if (targetTile.isCityCenter() && targetTile.getOwner() == unit.civ) Alerts.cityConquered(unit.civ, targetTile.getCity()!!)
         return buildJsonObject {
             put("attacked", true)
             put("defender", defenderName)
@@ -696,7 +797,7 @@ class GameSession {
         val unit = findOwnUnit(params)
         val name = params.requireStr("improvement")
         val improvement = buildableImprovements(unit).firstOrNull { it.name == name }
-            ?: throw BridgeException("${unit.displayName()} can't build $name here")
+            ?: throw BridgeException("${Gameplay.plain(unit.displayName())} can't build $name here")
         val tile = unit.getTile()
         if (improvement.name == Constants.cancelImprovementOrder) {
             tile.stopWorkingOnImprovement()
@@ -727,7 +828,7 @@ class GameSession {
         val tileToMoveTo = try {
             unitView.getTileToMoveToThisTurn(targetTileView)
         } catch (_: UnitMovement.UnreachableDestinationException) {
-            throw BridgeException("${unit.displayName()} can't reach that tile")
+            throw BridgeException("${Gameplay.plain(unit.displayName())} can't reach that tile")
         }
 
         val previousPosition = unit.getTile().position
@@ -784,27 +885,35 @@ class GameSession {
      * optional title to pick between several actions of the same type (e.g. which improvement to build).
      */
     private fun unitAction(params: JsonObject): JsonElement {
+        requireTurn()
         val unit = findOwnUnit(params)
         val typeName = params.requireStr("action")
-        val type = UnitActionType.entries.firstOrNull { it.name == typeName }
-            ?: throw BridgeException("Unknown unit action '$typeName'")
-        val title = params.str("title")
+        if (UnitActionType.entries.none { it.name == typeName }) throw BridgeException("Unknown unit action '$typeName'")
+        val x = params.int("x")
+        val y = params.int("y")
+        val target = if (x != null && y != null) HexCoord(x, y) else null
+        return UnitOrders.run(unit, typeName, params.str("title"), target, params.bool("confirm") ?: false)
+    }
 
-        // getUnitActions(unit, type) is lazy, so we stop as soon as we find the action -
-        // before reaching the few action factories that need Unciv's own world screen.
-        val action = UnitActions.getUnitActions(unit, type)
-            .firstOrNull { it.action != null && (title == null || it.title == title) }
-            ?: throw BridgeException("${unit.displayName()} can't do $typeName right now")
-        try {
-            action.action!!.invoke()
-        } catch (ex: Exception) {
-            if (ex is UninitializedPropertyAccessException || ex is NullPointerException)
-                throw BridgeException("$typeName needs one of Unciv's own popups, which the bridge doesn't support yet")
-            throw ex
-        }
+    /** params: name (or x, y of the city); tileX, tileY - a tile from getCity().bombardTargets. The city shoots at it. */
+    private fun cityAttack(params: JsonObject): JsonElement {
+        requireTurn()
+        val city = findOwnCity(params)
+        val cityView = GameView(game(), viewer()).getCityView(city)
+        if (!cityView.canBombard()) throw BridgeException("${city.name} can't attack this turn")
+        val position = HexCoord(params.requireInt("tileX"), params.requireInt("tileY"))
+        val tile = cityView.getBombardableTiles().firstOrNull { it.position() == position }?.let { game().tileMap[position] }
+            ?: throw BridgeException("${city.name} can't hit that tile")
+        val defender = com.unciv.logic.battle.Battle.getMapCombatantOfTile(tile) ?: throw BridgeException("There's nothing to hit there")
+        val damage = com.unciv.logic.battle.Battle.attackOrNuke(com.unciv.logic.battle.CityCombatant(city),
+            com.unciv.logic.battle.AttackableTile(city.getCenterTile(), tile, 0f, defender))
         return buildJsonObject {
-            put("done", typeName)
-            put("unitStillExists", unit.civ.units.getCivUnits().any { it === unit })
+            put("attacked", true)
+            put("defender", defender.getName())
+            put("damageToDefender", damage.attackerDealt)
+            put("defenderDefeated", defender.isDefeated())
+            put("defenderHealth", defender.getHealth())
+            put("city", StateWriter.cityDetails(cityView))
         }
     }
 
@@ -814,9 +923,25 @@ class GameSession {
      */
     private fun setSettings(params: JsonObject): JsonElement {
         val settings = UncivGame.Current.settings
-        params.bool("automatedUnitsMoveOnTurnStart")?.let { settings.automatedUnitsMoveOnTurnStart = it }
+        // Unciv's own options that its game logic reads (Options > Gameplay / Automation)
+        val flags: Map<String, kotlin.reflect.KMutableProperty0<Boolean>> = mapOf(
+            "automatedUnitsMoveOnTurnStart" to settings::automatedUnitsMoveOnTurnStart,
+            "autoUnitCycle" to settings::autoUnitCycle,
+            "alternateUnitCycleOrder" to settings::alternateUnitCycleOrder,
+            "autoAssignCityProduction" to settings::autoAssignCityProduction,
+            "autoBuildingRoads" to settings::autoBuildingRoads,
+            "automatedWorkersReplaceImprovements" to settings::automatedWorkersReplaceImprovements,
+            "stopAutomatedWorkersRemoveVegetation" to settings::stopAutomatedWorkersRemoveVegetation,
+            "automatedUnitsCanUpgrade" to settings::automatedUnitsCanUpgrade,
+            "automatedUnitsChoosePromotions" to settings::automatedUnitsChoosePromotions,
+            "citiesAutoBombardAtEndOfTurn" to settings::citiesAutoBombardAtEndOfTurn,
+            "autoAssignSpecialistsInNewCities" to settings::autoAssignSpecialistsInNewCities,
+        )
+        for ((key, property) in flags) params.bool(key)?.let { property.set(it) }
+        params.bool("checkForDueUnits")?.let { checkForDueUnits = it }
         return buildJsonObject {
-            put("automatedUnitsMoveOnTurnStart", settings.automatedUnitsMoveOnTurnStart)
+            for ((key, property) in flags) put(key, property.get())
+            put("checkForDueUnits", checkForDueUnits)
         }
     }
 
@@ -828,9 +953,9 @@ class GameSession {
     private fun promote(params: JsonObject): JsonElement {
         val unit = findOwnUnit(params)
         val name = params.requireStr("promotion")
-        if (!canPromoteNow(unit)) throw BridgeException("${unit.displayName()} can't be promoted right now")
+        if (!canPromoteNow(unit)) throw BridgeException("${Gameplay.plain(unit.displayName())} can't be promoted right now")
         if (unit.promotions.getAvailablePromotions().none { it.name == name })
-            throw BridgeException("$name isn't available to ${unit.displayName()}")
+            throw BridgeException("$name isn't available to ${Gameplay.plain(unit.displayName())}")
         val gameView = GameView(game(), viewer())
         gameView.getMapUnitView(unit).tryAddPromotion(name)
         return getUnit(params)
@@ -858,11 +983,17 @@ class GameSession {
         val constructions = cityView.constructions
         if (cityView.isPuppet()) throw BridgeException("${city.name} is a puppet - you can't choose its production")
         if (!constructions.isBuildable(construction)) throw BridgeException("${city.name} can't build $name")
-        if (construction is Building && construction.hasCreateOneImprovementUnique())
-            throw BridgeException("$name needs a target tile, which the bridge doesn't support yet")
         if (!constructions.canAddToQueue(construction)) throw BridgeException("$name can't be added (is the queue full?)")
         val now = (params.str("mode") ?: "now") == "now"
-        cityView.tryAddToQueueConstruction(construction, addToTop = now)
+        if (construction is Building && construction.hasCreateOneImprovementUnique()) {
+            // Unciv's city screen asks for the tile the improvement goes on, then queues the building with it
+            val tileView = placeTile(cityView, construction, params)
+            cityView.tryAddToQueueWithTile(construction, tileView)
+            if (now) {
+                val index = constructions.constructionQueue.lastIndexOf(name)
+                if (index > 0) cityView.tryMoveEntryToTop(index)
+            }
+        } else cityView.tryAddToQueueConstruction(construction, addToTop = now)
         if (constructions.currentConstructionName() == name) cityView.tryReassignPopulation()
         return StateWriter.cityDetails(cityView)
     }
@@ -891,9 +1022,13 @@ class GameSession {
         val statName = params.str("stat") ?: "gold"
         val stat = Stat.statsUsableToBuy.firstOrNull { it.name.equals(statName, ignoreCase = true) }
             ?: throw BridgeException("Can't buy with '$statName'")
-        if (construction is Building && construction.hasCreateOneImprovementUnique())
-            throw BridgeException("$name needs a target tile, which the bridge doesn't support yet")
         val constructions = cityView.constructions
+        // A building that creates an improvement: on the tile chosen now, or the one it was queued with
+        val placeTile = if (construction is Building && construction.hasCreateOneImprovementUnique()) {
+            if (params.int("tileX") != null) placeTile(cityView, construction, params)
+            else cityView.getImprovementToCreate(construction)?.let { constructions.getTileForImprovement(it.name) }
+                ?: throw BridgeException("Pick the tile the ${cityView.getImprovementToCreate(construction)?.name ?: "improvement"} goes on")
+        } else null
         if (!cityView.canBePurchasedWithStat(construction, stat)) throw BridgeException("$name can't be bought with ${stat.name.lowercase()}")
         val cost = constructions.getStatBuyCost(construction, stat)
             ?: throw BridgeException("$name can't be bought with ${stat.name.lowercase()}")
@@ -902,9 +1037,22 @@ class GameSession {
         if (!constructions.isConstructionPurchaseAllowed(construction, stat, cost))
             throw BridgeException("Can't buy $name for $cost ${stat.name.lowercase()} (not enough, or not allowed here)")
         val queueIndex = params.int("queueIndex") ?: -1
-        if (!constructions.purchaseConstruction(construction, queueIndex, stat, null))
+        if (!constructions.purchaseConstruction(construction, queueIndex, stat, placeTile))
             throw BridgeException("Buying $name failed (no room to place it?)")
         return StateWriter.cityDetails(cityView)
+    }
+
+    /** params tileX, tileY: where [building]'s improvement goes - checked like Unciv's city screen does. */
+    private fun placeTile(cityView: com.unciv.view.CityView, building: Building, params: JsonObject): com.unciv.view.TileView {
+        val improvement = cityView.getImprovementToCreate(building) ?: throw BridgeException("${building.name} has nothing to place")
+        val x = params.int("tileX") ?: throw BridgeException("Pick the tile the ${improvement.name} goes on (tileX, tileY)")
+        val y = params.requireInt("tileY")
+        val position = HexCoord(x, y)
+        if (position !in game().tileMap) throw BridgeException("($position) is off the map")
+        val tileView = GameView(game(), viewer()).getTile(game().tileMap[position])
+        if (!cityView.isOwnedTile(tileView) || !cityView.constructions.canPlaceCreateOneImprovementOn(improvement, tileView))
+            throw BridgeException("The ${improvement.name} can't go there")
+        return tileView
     }
 
     /** Runs one of [CityView]'s try... actions on your city (params: name or x, y) and returns the updated city. */
@@ -997,6 +1145,11 @@ class GameSession {
     private fun endTurn(): JsonElement {
         val game = game()
         val player = viewer()
+        if (player.isCurrentPlayer() && !player.isDefeated()) {
+            val blockers = Gameplay.blockers(game, player, Alerts.countNeedingAnswer(game, player), checkForDueUnits)
+            if (blockers.isNotEmpty()) throw BridgeException("Not yet: ${blockers.first()["text"].toString().trim('"')}")
+            Alerts.dismissInformational(game, player)
+        }
         // Unciv's "Move automated units" step: explorers, automated workers and units on multi-turn
         // moves act now, as your turn ends, before the AI players move.
         if (!player.hasMovedAutomatedUnits) {

@@ -62,7 +62,45 @@ def main():
         print("preview move:", b.call("previewMove", unitId=warrior["id"], x=target["x"], y=target["y"]))
         print("move warrior:", b.call("moveUnit", unitId=warrior["id"], x=target["x"], y=target["y"]))
 
+    def clear_blockers():
+        """Does what a player would for each thing End turn waits for (protocol v16 blockers)."""
+        for _ in range(20):
+            state = b.call("getState")
+            if not state["blockers"]:
+                return
+            blocker = state["blockers"][0]
+            kind = blocker["type"]
+            print("  blocker:", kind, "-", blocker["text"])
+            if kind == "AnswerAlerts" or state["alerts"]:
+                for alert in state["alerts"]:
+                    b.call("answerAlert", key=alert["key"], option=alert["options"][0]["id"])
+            elif kind == "PickTech":
+                techs = b.call("getTechs")
+                b.call("setResearch", tech=next(t["name"] for t in techs["techs"] if t["researchable"]))
+            elif kind == "PickConstruction":
+                b.call("setProduction", name=blocker["city"], construction="Warrior")
+            elif kind in ("PickPolicy", "MoveSpies"):
+                b.call("dismissBlocker", type=kind)
+            elif kind == "PickGreatPerson":
+                choices = b.call("getGreatPersonChoices")
+                b.call("chooseGreatPerson", unit=next(c["name"] for c in choices["choices"] if c["available"]))
+            elif kind == "WorldCongressVote":
+                b.call("vote")
+            elif kind in ("FoundPantheon", "ExpandPantheon", "FoundReligion", "EnhanceReligion", "ReformReligion"):
+                choices = b.call("getReligionChoices")
+                picks = []
+                for slot in choices["slots"]:
+                    picks.append(next(x["name"] for x in choices["beliefs"] if x["available"] and x["name"] not in picks
+                                      and (x["type"] == slot or slot == "Any")))
+                icon = next((i["name"] for i in choices.get("icons", []) if i["available"]), None)
+                b.call("chooseReligion", beliefs=picks, icon=icon, name=icon)
+            else:
+                raise RuntimeError(f"don't know how to clear {kind}")
+        raise RuntimeError("blockers didn't clear")
+
+    print("settings:", b.call("setSettings", checkForDueUnits=False))
     for _ in range(5):
+        clear_blockers()
         result = b.call("endTurn")
         print(f"endTurn -> turn {result['turn']}, your turn: {result['yourTurn']}, "
               f"{len(result['notifications'])} notifications")
@@ -87,6 +125,13 @@ def main():
     for tab in ["cities", "stats", "trades", "units", "politics", "resources", "religion", "wonders", "notifications"]:
         o = b.call("getOverview", tab=tab)
         print(f"overview {tab}: tabs {[t['id'] + ':' + t['state'] for t in o['tabs']][:3]}..., keys {sorted(k for k in o if k not in ('tabs', 'tab', 'turn'))}")
+    print("victory:", [v["name"] for v in b.call("getVictory")["ourStatus"]])
+    print("religion:", b.call("getReligionChoices")["state"])
+    print("espionage:", b.call("getEspionage")["enabled"])
+    print("great people:", len(b.call("getGreatPersonChoices")["choices"]))
+    print("vote:", b.call("getVoteChoices")["canVote"])
+    some_unit = b.call("getState")["units"][0]
+    print("disband asks first:", b.call("unitAction", unitId=some_unit["id"], action="DisbandUnit").get("confirm"))
     save_path = os.path.join(tempfile.gettempdir(), "unciv-bridge-smoke-test.save")
     print("saved:", b.call("saveGame", path=save_path))
     print("loaded:", b.call("loadGame", path=save_path))

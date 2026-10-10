@@ -28,13 +28,24 @@ import kotlin.system.exitProcess
  * Requests are processed one at a time, in order. Several clients may connect
  * (e.g. Godot plus a debugging script); they share the same game.
  */
-class BridgeServer(private val port: Int, private val session: GameSession) {
+class BridgeServer(private val port: Int, private val session: GameSession, private val exitWhenIdleSeconds: Int = 0) {
     private val gameLock = Any()
     @Volatile private var shutdownRequested = false
+    private val clientCount = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var idleSince = System.currentTimeMillis()
 
     fun run() {
         val serverSocket = ServerSocket(port, 4, InetAddress.getLoopbackAddress())
         println("Unciv bridge listening on 127.0.0.1:$port (protocol v${BridgeMain.PROTOCOL_VERSION})")
+        if (exitWhenIdleSeconds > 0) thread(name = "bridge-idle-watch", isDaemon = true) {
+            while (true) {
+                Thread.sleep(5000)
+                if (clientCount.get() == 0 && System.currentTimeMillis() - idleSince > exitWhenIdleSeconds * 1000L) {
+                    println("No client for ${exitWhenIdleSeconds}s - exiting")
+                    synchronized(gameLock) { session.saveBeforeExit(); exitProcess(0) }   // never mid-request
+                }
+            }
+        }
         while (true) {
             val socket = serverSocket.accept()
             thread(name = "bridge-client-${socket.port}", isDaemon = true) { handleClient(socket) }
@@ -43,6 +54,7 @@ class BridgeServer(private val port: Int, private val session: GameSession) {
 
     private fun handleClient(socket: Socket) {
         println("Client connected from port ${socket.port}")
+        clientCount.incrementAndGet()
         socket.tcpNoDelay = true
         try {
             val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
@@ -56,13 +68,15 @@ class BridgeServer(private val port: Int, private val session: GameSession) {
                 writer.flush()
                 if (shutdownRequested) {
                     println("Shutdown requested by client - exiting")
-                    exitProcess(0)
+                    synchronized(gameLock) { session.saveBeforeExit(); exitProcess(0) }
                 }
             }
         } catch (_: SocketException) {
             // client went away
         } finally {
             socket.close()
+            idleSince = System.currentTimeMillis()
+            clientCount.decrementAndGet()
             println("Client from port ${socket.port} disconnected")
         }
     }

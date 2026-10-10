@@ -123,6 +123,9 @@ object StateWriter {
                         put("producing", city.currentConstructionName())
                         put("producingTurns", safeTurns(city, city.currentConstructionName(), true))
                         put("turnsToGrowth", city.getNumTurnsToNewPopulation())
+                        put("isPuppet", city.isPuppet())
+                        put("isBeingRazed", city.isBeingRazed())
+                        put("canBombard", city.canBombard() && viewer.isCurrentPlayer() && city.getBombardableTiles().isNotEmpty())
                     }
                 }
             }
@@ -244,11 +247,13 @@ object StateWriter {
     /** One of the player's units, plus where it can go, what it can attack, what it can build and which actions it has. */
     fun unitDetails(
         unit: MapUnitView,
-        actions: List<UnitAction>,
+        actions: List<UnitOrders.Entry>,
         targets: List<AttackableTileView>,
         improvements: List<Pair<TileImprovement, Int>>,
         canPromote: Boolean,
         promotionChoices: List<Promotion>,
+        /** Tiles a nuke or an air sweep could hit: (tile, "nuke" / "airSweep") */
+        specialTargets: List<Pair<com.unciv.logic.map.tile.Tile, String>> = emptyList(),
     ): JsonObject = buildJsonObject {
         writeOwnUnit(unit)
         put("xp", unit.xp)
@@ -291,6 +296,14 @@ object StateWriter {
                     }
                 }
             }
+            for ((tile, kind) in specialTargets) addJsonObject {
+                put("x", tile.position.x)
+                put("y", tile.position.y)
+                put("fromX", unit.getTile().position().x)
+                put("fromY", unit.getTile().position().y)
+                put("kind", kind)
+                put("name", if (kind == "nuke") "Nuclear strike" else "Air sweep")
+            }
         }
         val unitTile = unit.getTile()
         putJsonObject("tileWork") {
@@ -315,16 +328,13 @@ object StateWriter {
                 }
             }
         }
-        putJsonArray("actions") {
-            for (action in actions) {
-                addJsonObject {
-                    put("type", action.type.name)
-                    put("title", action.title)
-                    put("enabled", action.action != null)
-                    put("current", action.isCurrentAction)
-                }
-            }
-        }
+        UnitOrders.writeEntries(this, actions)
+        put("due", unit.due)
+        put("escorting", unit.isEscorting())
+        if (unit.isMoving()) try {
+            val destination = unit.getMovementDestination().position()
+            putJsonObject("destination") { put("x", destination.x); put("y", destination.y) }
+        } catch (_: Exception) {}
     }
 
     /** Turns until [name] is done in [city], or -1 when that isn't a meaningful number (e.g. "Produce Gold"). */
@@ -381,6 +391,14 @@ object StateWriter {
                         writeBuyOptions(city, construction)
                     }
                     put("kind", constructionKind(construction))
+                    // A building that creates an improvement shows the tile it will go on
+                    if (construction is Building && construction.hasCreateOneImprovementUnique()) {
+                        city.getImprovementToCreate(construction)?.let { improvement ->
+                            constructions.getTileForImprovement(improvement.name)?.let { tile ->
+                                putJsonObject("tile") { put("x", tile.position().x); put("y", tile.position().y) }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -398,7 +416,10 @@ object StateWriter {
                     put("cost", city.getConstructionProductionCost(nonPerpetual))
                     put("buildable", constructions.isBuildable(construction))
                     put("canQueue", constructions.canAddToQueue(construction))
-                    if (construction is Building && construction.hasCreateOneImprovementUnique()) put("needsTile", true)
+                    if (construction is Building && construction.hasCreateOneImprovementUnique()) {
+                        put("needsTile", true)
+                        writePlaceTiles(city, construction)
+                    }
                     val goldCost = try { constructions.getStatBuyCost(nonPerpetual, Stat.Gold) } catch (_: Exception) { null }
                     if (goldCost != null) {
                         put("goldCost", goldCost)
@@ -603,7 +624,47 @@ object StateWriter {
         put("canAnnex", city.isPuppet() && mayAnnex)
         put("canRaze", !city.isPuppet() && !city.isBeingRazed() && city.canBeDestroyed() && mayAnnex)
         put("canChange", civ.isCurrentPlayer() && !city.isPuppet())
+        try { writeBombard(city) } catch (ex: Exception) { System.err.println("Bombard targets: $ex") }
         // endregion
+    }
+
+    /** Where a building that creates an improvement (Unciv's "CreatesOneImprovement" unique) may put it. */
+    private fun JsonObjectBuilder.writePlaceTiles(city: CityView, building: Building) {
+        val improvement = city.getImprovementToCreate(building) ?: return
+        put("improvement", improvement.name)
+        putJsonArray("placeTiles") {
+            val range = maxOf(city.getExpandRange(), city.getWorkRange())
+            for (tile in city.centerTile().getVisibleTilesInDistance(range)) {
+                if (!city.isOwnedTile(tile) || !city.isInRange(tile)) continue
+                if (!city.constructions.canPlaceCreateOneImprovementOn(improvement, tile)) continue
+                addJsonObject { put("x", tile.position().x); put("y", tile.position().y) }
+            }
+        }
+    }
+
+    /** What the city's guns could hit this turn (Unciv's city bombard), with the expected damage. */
+    private fun JsonObjectBuilder.writeBombard(city: CityView) {
+        val raw = city.getCity()
+        put("canBombard", city.canBombard() && city.viewingCiv().isCurrentPlayer())
+        if (!city.canBombard()) return
+        putJsonArray("bombardTargets") {
+            for (tileView in city.getBombardableTiles()) {
+                val tile = raw.civ.gameInfo.tileMap[tileView.position()]
+                val defender = com.unciv.logic.battle.Battle.getMapCombatantOfTile(tile) ?: continue
+                addJsonObject {
+                    put("x", tile.position.x)
+                    put("y", tile.position.y)
+                    put("name", defender.getName())
+                    put("civ", defender.getCivInfo().civName)
+                    put("health", defender.getHealth())
+                    put("maxHealth", defender.getMaxHealth())
+                    try {
+                        put("expectedDamageToDefender", com.unciv.logic.battle.BattleDamage.calculateDamageToDefender(
+                            com.unciv.logic.battle.CityCombatant(raw), defender, raw.getCenterTile(), 0.5f))
+                    } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     private fun constructionKind(construction: IConstruction?): String = when {
@@ -785,6 +846,11 @@ object StateWriter {
                     put("canOfferPeace", viewer.isAtWarWith(other)
                         && theirs?.hasFlag(com.unciv.logic.civilization.diplomacy.DiplomacyFlags.DeclaredWar) != true
                         && !ours.hasFlag(com.unciv.logic.civilization.diplomacy.DiplomacyFlags.DeclinedPeace))
+                    try {
+                        DiplomacyActions.details(this, viewer, other)
+                    } catch (ex: Exception) {
+                        System.err.println("Diplomacy details for ${other.civName}: $ex")
+                    }
                 }
             }
         }

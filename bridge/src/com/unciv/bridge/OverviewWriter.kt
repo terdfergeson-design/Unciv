@@ -43,7 +43,7 @@ import kotlin.math.roundToInt
  * the same rules about what you're allowed to know as Unciv's own tabs (ui/screens/overviewscreen).
  */
 object OverviewWriter {
-    val TABS = listOf("cities", "stats", "trades", "units", "politics", "resources", "religion", "wonders", "notifications")
+    val TABS = listOf("cities", "stats", "trades", "units", "politics", "resources", "religion", "wonders", "notifications", "espionage")
 
     fun overview(game: GameInfo, civ: Civilization, tab: String): JsonObject = buildJsonObject {
         if (tab !in TABS) throw BridgeException("Unknown overview tab '$tab' - one of ${TABS.joinToString()}")
@@ -62,6 +62,7 @@ object OverviewWriter {
             "religion" -> religion(game, civ)
             "wonders" -> wonders(civ)
             "notifications" -> notifications(game, civ)
+            "espionage" -> for ((key, value) in Espionage.overview(civ)) put(key, value)
         }
     }
 
@@ -80,6 +81,11 @@ object OverviewWriter {
         }
         "wonders" -> if (civ.naturalWonders.isEmpty() && civ.cities.isEmpty()) "disabled" else "normal"
         "notifications" -> if (civ.notifications.isEmpty() && civ.notificationsLog.isEmpty()) "disabled" else "normal"
+        "espionage" -> when {
+            !game.isEspionageEnabled() -> "hidden"
+            civ.espionageManager.spyList.isEmpty() -> "disabled"
+            else -> "normal"
+        }
         else -> "normal"
     }
 
@@ -216,7 +222,7 @@ object OverviewWriter {
                 val view = gameView.getMapUnitView(unit)
                 addJsonObject {
                     put("id", unit.id)
-                    put("name", view.displayName())
+                    put("name", Gameplay.plain(view.displayName()))
                     put("baseUnit", unit.baseUnit.name)
                     unit.instanceName?.let { put("instanceName", it) }
                     put("unitType", unit.baseUnit.unitType)
