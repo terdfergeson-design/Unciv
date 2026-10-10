@@ -17,7 +17,7 @@ import java.io.File
  * or simply `gradlew :bridge:run` from the repository root.
  */
 object BridgeMain {
-    const val PROTOCOL_VERSION = 19
+    const val PROTOCOL_VERSION = 20
 
     /** The bridge's own folder (saves, the last game setup): ~/.unciv-vr */
     val dataDir = File(System.getProperty("user.home"), ".unciv-vr")

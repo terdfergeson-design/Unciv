@@ -625,6 +625,8 @@ object StateWriter {
         }
         put("workRange", city.getWorkRange())
         put("viewRange", maxOf(city.getExpandRange(), city.getWorkRange()))
+        // The era's city noise (cityAncient ... cityFuture), which Unciv loops while you're in a city
+        put("ambience", city.getCityAmbienceSound())
         putJsonArray("cities") { city.getViewableCities().forEach { add(it.name) } }
         val mayAnnex = !civ.hasUnique(UniqueType.MayNotAnnexCities)
         put("isBeingRazed", city.isBeingRazed())

@@ -227,6 +227,8 @@ object UnitOrders {
                 put("title", Gameplay.plain(entry.title))
                 put("enabled", entry.enabled)
                 put("current", entry.current)
+                // The sound Unciv plays for this action (fortify, promote, chimes...), for the client
+                put("sound", entry.type.uncivSound.fileName)
                 entry.confirm?.let { put("confirm", it) }
                 if (entry.anyTile) put("target", "tile")
                 entry.targets?.let { targets ->
