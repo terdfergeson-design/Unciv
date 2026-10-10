@@ -853,6 +853,8 @@ class GameSession {
     /**
      * params: unitId, x, y. Where a move there would take the unit, without moving it - like the path and
      * turn count Unciv shows before you press "Move here". stops[i] is where the unit ends turn i + 1.
+     * canStay is whether it could actually end up on the tile: a path can lead to a tile it may only pass
+     * through, such as one that already holds as many units as Unciv allows.
      */
     private fun previewMove(params: JsonObject): JsonElement {
         val game = game()
@@ -870,6 +872,7 @@ class GameSession {
         }
         return buildJsonObject {
             put("canReach", path.isNotEmpty())
+            put("canStay", unitView.canMoveTo(targetTileView))
             put("turns", path.size)
             putJsonArray("stops") {
                 for (tile in path) addJsonObject {

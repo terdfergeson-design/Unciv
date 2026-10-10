@@ -47,6 +47,18 @@ object DebugCommands {
                 civ.getDiplomacyManager(other)!!.declareWar()
                 "ok"
             }
+            // x, y, health (and unitId to pick one of a stack): hurt a unit, so one attack finishes it off
+            "unitHealth" -> {
+                val at = HexCoord(params.requireInt("x"), params.requireInt("y"))
+                if (at !in game.tileMap) throw BridgeException("($at) is off the map")
+                val units = game.tileMap[at].getUnits().toList()
+                if (units.isEmpty()) throw BridgeException("No unit at ($at)")
+                val id = params.int("unitId")
+                val unit = (if (id == null) units.first() else units.firstOrNull { it.id == id })
+                    ?: throw BridgeException("No unit $id at ($at)")
+                unit.health = params.requireInt("health")
+                "ok"
+            }
             "cityHealth" -> {
                 val city = game.getCities().first { it.name == params.requireStr("city") }
                 city.health = params.requireInt("health")

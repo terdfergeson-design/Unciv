@@ -75,6 +75,8 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v19** | | |
+| `previewMove` | | also `canStay`: whether the unit could end its move on the tile. A path can lead to a tile it may only pass through - one that already holds as many units as Unciv allows, say - and a move there stops short of it |
 | **v18** | | |
 | `getState` | – | also `game{ruleset, mods[], difficulty, speed, mapSize}` |
 | `setSettings` | also optional integers `notificationsLogMaxTurns` (3-15, Options > Gameplay) and `turnsBetweenAutosaves` (Options > Advanced; the bridge's autosave follows it) | also those two |
@@ -89,7 +91,7 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `diplomacyAction` | `civ`, `action`: giftGold (`gold` 250/500/1000), giftImprovement (`x, y, improvement`), pledgeProtection, revokeProtection, tribute (`kind` gold / worker), marriage, denounce, offerFriendship, makeDemand (`demand`) | `message`, `diplomacy` |
 | `cityAttack` | city, `tileX, tileY` (from `getCity().bombardTargets`) | `attacked`, `defender`, `damageToDefender`, `defenderDefeated`, `defenderHealth`, `city` (updated getCity) |
 | `getEspionage` / `moveSpy` / `stageCoup` | – / `spy`, `city?` (none = hideout), `confirm?` / `spy`, `confirm?` | `enabled`, `spies[{name, rank, action, location, x?, y?, turns?, alive, canCoup?, coupChance?, stagingCoup?}]`, `cities[{name, civ, x, y, isCityState, own, spies[], canMoveHere[], promiseWarning?}]` / `done` (false: `confirm` question), `espionage` |
-| `debug` | only when the bridge runs with `--debug` (tests): `command` (addStat, addTech, spawnUnit, freeGreatPerson, meet, war, cityHealth, reveal, popupAlert, votingFlag), ... | `result` |
+| `debug` | only when the bridge runs with `--debug` (tests): `command` (addStat, addTech, spawnUnit, freeGreatPerson, meet, war, unitHealth, cityHealth, reveal, popupAlert, votingFlag), ... | `result` |
 | `shutdown` | – | `shuttingDown`; the bridge exits right after replying (the client uses this for bridges it launched itself) |
 | `endTurn` | – (refused while `getState().blockers` isn't empty; messages that only had a close button are taken as read; your automated / exploring units and multi-turn moves act first, then the AI players) | `turn`, `currentPlayer`, `yourTurn`, `gameOver`, `winner?`, `victoryType?`, `defeated`, `notifications[{text, category}]`, `events[...]` (see below) |
 
