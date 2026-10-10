@@ -39,6 +39,7 @@ import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
 import com.unciv.view.AttackableTileView
 import com.unciv.view.GameView
 import com.unciv.view.MapUnitView
+import com.unciv.models.ruleset.unique.UniqueType
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -49,6 +50,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.io.File
@@ -701,8 +703,33 @@ class GameSession {
             it to if (it.name == Constants.cancelImprovementOrder) 0 else it.getTurnsToBuild(unit.civ, unit)
         }
         val promotionChoices = if (canPromoteNow(unit)) unit.promotions.getAvailablePromotions().toList() else emptyList()
-        return StateWriter.unitDetails(unitView, UnitOrders.list(unit), attackTargets(unitView), improvements,
+        val details = StateWriter.unitDetails(unitView, UnitOrders.list(unit), attackTargets(unitView), improvements,
             canPromoteNow(unit), promotionChoices, specialTargets(unit, unitView))
+        val spots = suggestedCitySpots(unit)
+        if (spots.isEmpty()) return details
+        return JsonObject(details.jsonObject + ("suggestedCitySpots" to buildJsonArray {
+            for ((tile, value) in spots) addJsonObject {
+                put("x", tile.position.x)
+                put("y", tile.position.y)
+                put("value", value.toInt())
+            }
+        }))
+    }
+
+    /**
+     * v23: Unciv's suggested city locations for a unit that can found a city (WorldMapTileUpdater, "Show suggested
+     * city locations for units that can found cities"): the three best explored tiles within 5, worth at least 50.
+     */
+    private fun suggestedCitySpots(unit: MapUnit): List<Pair<com.unciv.logic.map.tile.Tile, Float>> {
+        if (!unit.hasUnique(UniqueType.FoundCity)) return emptyList()
+        return try {
+            com.unciv.logic.automation.unit.CityLocationTileRanker.getBestTilesToFoundCity(unit, 5, minimumValue = 50f)
+                .tileRankMap.entries.filter { it.key.isExplored(unit.civ) }
+                .sortedByDescending { it.value }.take(3).map { it.key to it.value }
+        } catch (ex: Exception) {
+            System.err.println("Couldn't rank city locations: $ex")
+            emptyList()
+        }
     }
 
     /** Tiles a nuclear weapon could strike, or an air unit preparing an air sweep could sweep. */

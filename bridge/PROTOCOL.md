@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v22)
+# Unciv bridge protocol (v23)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
@@ -75,6 +75,8 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v23** | | |
+| `getUnit` | | for a unit that can found a city, also `suggestedCitySpots[{x, y, value}]`: Unciv's suggested city locations (the three best explored tiles within 5, worth at least 50, as its map marks them) |
 | **v22** | | |
 | `getCivilopedia` | – (works without a game too: then the Gods & Kings ruleset) | Unciv's Civilopedia categories, in its order: `ruleset`, `categories[{key, label, icon, entries[{name, label, sub?, rgb? (terrains), outer?, inner?, cityStateType? (nations), unit? (unit name groups)}]}]`. `key` is Unciv's CivilopediaCategories name (`Building`, `Unit`, `Technology`, `Tutorial`...); entries are sorted and filtered (hidden ones, religion when it's off) as Unciv's screen does, `sub` is the heading they go under |
 | `getCivilopediaEntry` | `link` (`Category/Name`, as Unciv's links: the category's key or label) | `category`, `name`, `link`, `lines[]`: Unciv's formatted lines, only the properties set: `text` (translated as Unciv shows it; Unciv's icon characters ⚙ ¤ ⁂ ⍾ ♪... included), `link` (another entry, or an https:// address), `icon` (an entry to draw the icon of), `extraImage` (a file in ExtraImages or an icon path), `imageSize`, `size`, `header` (1-8), `indent`, `padding`, `color` (`#rrggbb`), `separator`, `starred`, `centered`, `iconCrossed` |
