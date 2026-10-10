@@ -62,6 +62,13 @@ object StateWriter {
             put("year", game.getYear())
             put("currentPlayer", game.currentPlayer)
             put("playerCiv", viewer.civName)
+            putJsonObject("game") {   // what game this is (v18), for the settings board
+                put("ruleset", game.gameParameters.baseRuleset)
+                putJsonArray("mods") { for (mod in game.gameParameters.mods) add(mod) }
+                put("difficulty", game.difficulty)
+                put("speed", game.gameParameters.speed)
+                put("mapSize", game.tileMap.mapParameters.mapSize.name)
+            }
 
             putJsonObject("player") {
                 put("gold", viewer.gold)

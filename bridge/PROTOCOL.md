@@ -75,6 +75,9 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v18** | | |
+| `getState` | – | also `game{ruleset, mods[], difficulty, speed, mapSize}` |
+| `setSettings` | also optional integers `notificationsLogMaxTurns` (3-15, Options > Gameplay) and `turnsBetweenAutosaves` (Options > Advanced; the bridge's autosave follows it) | also those two |
 | **v16** | | |
 | `answerAlert` | `key`, `option` (from `getState().alerts`) | `message`; for a trade request's `counter`: also `civ`, `ours[]`, `theirs[]` (their offer, to put on the trade table) |
 | `dismissBlocker` | `type`: PickPolicy or MoveSpies (Unciv asks once; opening the screen dismisses it) | `blockers`, `alerts` |

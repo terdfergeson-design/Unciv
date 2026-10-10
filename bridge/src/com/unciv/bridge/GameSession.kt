@@ -939,9 +939,15 @@ class GameSession {
         )
         for ((key, property) in flags) params.bool(key)?.let { property.set(it) }
         params.bool("checkForDueUnits")?.let { checkForDueUnits = it }
+        // Options > Gameplay: how many turns the notification log keeps (Unciv's slider allows 3-15)
+        params.int("notificationsLogMaxTurns")?.let { settings.notificationsLogMaxTurns = it.coerceIn(3, 15) }
+        // Options > Advanced: autosave every so many turns
+        params.int("turnsBetweenAutosaves")?.let { settings.turnsBetweenAutosaves = it.coerceAtLeast(1) }
         return buildJsonObject {
             for ((key, property) in flags) put(key, property.get())
             put("checkForDueUnits", checkForDueUnits)
+            put("notificationsLogMaxTurns", settings.notificationsLogMaxTurns)
+            put("turnsBetweenAutosaves", settings.turnsBetweenAutosaves)
         }
     }
 
@@ -1159,7 +1165,7 @@ class GameSession {
         }
         val before = TurnEvents.snapshot(game, player)
         game.nextTurn()
-        autosave()
+        if (game.turns % UncivGame.Current.settings.turnsBetweenAutosaves.coerceAtLeast(1) == 0) autosave()   // as Unciv
         val next = viewer()
         val events = try {
             TurnEvents.events(game, next, before)
