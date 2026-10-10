@@ -499,7 +499,7 @@ class GameSession {
         if (!file.isFile) throw BridgeException("No such save: ${file.absolutePath}")
         val game = UncivFiles.gameInfoFromString(file.readText())
         setGame(game)
-        autosaveEnabled = true
+        autosaveEnabled = params.bool("remember") != false   // test runs load with remember: false, like newGame
         return StateWriter.summary(game, viewer())
     }
 
@@ -1157,10 +1157,18 @@ class GameSession {
             civView.tryMarkMovedAutomatedUnits()
             civView.tryAutomateAllUnits()
         }
+        val before = TurnEvents.snapshot(game, player)
         game.nextTurn()
         autosave()
         val next = viewer()
+        val events = try {
+            TurnEvents.events(game, next, before)
+        } catch (ex: Exception) {
+            System.err.println("Couldn't work out the turn's events: $ex")
+            JsonArray(emptyList())
+        }
         return buildJsonObject {
+            put("events", events)
             put("turn", game.turns)
             put("currentPlayer", game.currentPlayer)
             put("yourTurn", next == game.getCurrentPlayerCivilization())

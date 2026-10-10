@@ -900,6 +900,11 @@ object StateWriter {
                         put("strength", unit.strength)
                         put("rangedStrength", unit.rangedStrength)
                         put("movement", unit.movement)
+                        // for picking its model (a civ's unique unit looks like the one it replaces) and its battle motion
+                        unit.replaces?.let { put("replaces", it) }
+                        unit.uniqueTo?.let { put("uniqueTo", it) }
+                        unit.attackSound?.let { put("attackSound", it) }
+                        put("domain", if (unit.isAirUnit()) "Air" else if (unit.isWaterUnit) "Water" else "Land")
                     }
                 }
             }

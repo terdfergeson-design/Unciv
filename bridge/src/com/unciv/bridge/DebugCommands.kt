@@ -26,7 +26,12 @@ object DebugCommands {
             }
             "addTech" -> { civ.tech.addTechnology(params.requireStr("tech")); "ok" }
             "spawnUnit" -> {
-                val unit = civ.units.placeUnitNearTile(HexCoord(params.requireInt("x"), params.requireInt("y")), params.requireStr("unit"))
+                val at = HexCoord(params.requireInt("x"), params.requireInt("y"))
+                // Off the map, Unciv fails halfway and leaves a unit with no tile behind, which breaks getState
+                if (at !in game.tileMap) throw BridgeException("($at) is off the map")
+                val unitName = params.requireStr("unit")
+                if (unitName !in game.ruleset.units) throw BridgeException("No unit called $unitName")
+                val unit = civ.units.placeUnitNearTile(at, unitName)
                     ?: throw BridgeException("Couldn't place it")
                 unit.id.toString()
             }

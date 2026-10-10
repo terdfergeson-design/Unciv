@@ -28,10 +28,10 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `listOptions` | `ruleset?` | allowed values for every newGame option: `rulesets`, `nations[{name, leader, outerColor, innerColor, uniqueName, uniqueText}]`, `cityStatesAvailable`, `difficulties`, `speeds`, `eras`, `victoryTypes`, `mapSizes`, `mapShapes`, `mapTypes`, `mapResources` |
 | `getSetup` | – | `setup` (the options the last newGame used, or the defaults - what "Quick start" plays), `isLastSetup` |
 | `newGame` | all optional (defaults from `getSetup`): `civ` ("Random" or a nation), `ruleset`, `difficulty`, `speed`, `startingEra`, `aiPlayers`, `cityStates`, `victoryTypes[]`, `mapSize` (Tiny…Huge), `mapShape`, `mapType`, `mapResources`, `noRuins`, `noNaturalWonders`, `noBarbarians`, `ragingBarbarians`, `oneCityChallenge`, `noCityRazing`, `nuclearWeapons`, `espionage`, `seed`. Remembered for `getSetup` unless `remember: false` (test games: also no autosave). World wrap is always off for now | summary: `gameId`, `ruleset`, `turn`, `playerCiv`, `tileCount`, `mapRadius` |
-| `loadGame` | `name` (from `listSaves`) or `path` – any Unciv save file | summary |
+| `loadGame` | `name` (from `listSaves`) or `path` – any Unciv save file; `remember: false` (tests) keeps it from autosaving over the player's autosave | summary |
 | `listSaves` | – | `folder`, `saves[{name, modified (ms since 1970), autosave}]` newest first. The bridge keeps its saves in `~/.unciv-vr/SaveFiles` and writes `Autosave` there after every `endTurn` |
 | `saveGame` | `name` (into the bridge's save folder) or `path` | `path` – a normal Unciv save the desktop game can open |
-| `getRuleset` | – | `terrains{name: {type, rgb[r,g,b], impassable}}`, `resources{name: {type}}`, `units{name: {unitType, strength, rangedStrength, movement}}` |
+| `getRuleset` | – | `terrains{name: {type, rgb[r,g,b], impassable}}`, `resources{name: {type}}`, `units{name: {unitType, strength, rangedStrength, movement, replaces?, uniqueTo?, attackSound?, domain (Land / Water / Air)}}` |
 | `getState` | `since?` (a `revision` from an earlier getState) | see below. Adds `revision` and `full`; with a matching `since`, `full` is false and `tiles` holds only the tiles that changed (merge them by `x, y`) |
 | `getTile` | `x, y` | that tile as in `getState` plus (when explored) `yields{food, production, gold, science, culture, faith}`, `defenseBonus` (percent), `impassable`, `worked`, `workedBy?`, `pillaged` |
 | `getUnit` | `unitId` | own-unit fields + `reachable[{x,y}]` (this turn) + `actions[{type, title, enabled, current, confirm?, target? ("tile"), targets?[{x,y}] (no list: any tile may be tried), destination?{x,y}}]` + `due`, `escorting`, `destination?` + `targets[{x, y, fromX, fromY, name, civ, health, maxHealth, isCity, expectedDamageToDefender, expectedDamageToAttacker, kind? (nuke / airSweep: any tile in range)}]` + `improvements[{name, turns}]` + `tileWork{improvement, inProgress, turnsLeft}` + `xp, xpForNextPromotion, canPromote, promotions[]` + `promotionChoices[{name, description}]` (only when `canPromote`) |
@@ -88,7 +88,26 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `getEspionage` / `moveSpy` / `stageCoup` | – / `spy`, `city?` (none = hideout), `confirm?` / `spy`, `confirm?` | `enabled`, `spies[{name, rank, action, location, x?, y?, turns?, alive, canCoup?, coupChance?, stagingCoup?}]`, `cities[{name, civ, x, y, isCityState, own, spies[], canMoveHere[], promiseWarning?}]` / `done` (false: `confirm` question), `espionage` |
 | `debug` | only when the bridge runs with `--debug` (tests): `command` (addStat, addTech, spawnUnit, freeGreatPerson, meet, war, cityHealth, reveal, popupAlert, votingFlag), ... | `result` |
 | `shutdown` | – | `shuttingDown`; the bridge exits right after replying (the client uses this for bridges it launched itself) |
-| `endTurn` | – (refused while `getState().blockers` isn't empty; messages that only had a close button are taken as read; your automated / exploring units and multi-turn moves act first, then the AI players) | `turn`, `currentPlayer`, `yourTurn`, `gameOver`, `winner?`, `victoryType?`, `defeated`, `notifications[{text, category}]` |
+| `endTurn` | – (refused while `getState().blockers` isn't empty; messages that only had a close button are taken as read; your automated / exploring units and multi-turn moves act first, then the AI players) | `turn`, `currentPlayer`, `yourTurn`, `gameOver`, `winner?`, `victoryType?`, `defeated`, `notifications[{text, category}]`, `events[...]` (see below) |
+
+### `endTurn` events (protocol v17)
+
+What the other players did that you could see, in the order the civs played, so the client can play it back
+(`TurnEvents.kt`). Unciv keeps no ordered log of the AI's actions, so the bridge compares the game before and
+after the turn: where each unit was and how healthy, and the attacks Unciv remembers since each civ's turn
+started (the ones its movement-arrow overlay draws), filtered with the View API's `getVisibleAttacks` (an
+attack shows when either end was in sight). Within a civ, its moves come before its fights. At most 300 events.
+
+- `{type: "move", unit, name, civ, from: [x, y], to: [x, y]}` - only where it started and ended (the client
+  draws a straight hex line). A melee unit that attacked walks to the tile it attacked from; the advance or
+  retreat afterwards is a second move after the attack.
+- `{type: "attack", attacker?, name, civ, sound, ranged, city, from, to, defender?, defenderName, defenderCiv,
+  damage, defenderDied?, defenderCity?, cityCaptured?, damageTaken?, attackerDied?}` - `attacker` is missing
+  for a city bombarding or a unit that has since died (`attackerDied`); `sound` is the unit's `attackSound`;
+  `damage` is the health the defender lost, split evenly when several attacks hit the same tile; the death
+  (or capture of a city) is put on the last of those.
+
+The player's own fights aren't listed: the client plays those when it makes them (`attack`, `cityAttack`).
 
 ### `getState`
 ```
