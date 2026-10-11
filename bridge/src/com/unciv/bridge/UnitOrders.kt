@@ -126,7 +126,7 @@ object UnitOrders {
             other.getDiplomacyManager(unit.civ)?.hasFlag(DiplomacyFlags.AgreedToNotSettleNearUs) == true
                 && other.cities.any { it.getCenterTile().aerialDistanceTo(tile) <= 6 && other.hasExplored(it.getCenterTile()) }
         }.map { it.getLeaderDisplayName() }.toList()
-        val confirm = if (promised.isEmpty()) null else "Do you want to break your promise to ${promised.joinToString(", ")}?"
+        val confirm = if (promised.isEmpty()) null else Lang.t("Do you want to break your promise to [${promised.joinToString(", ")}]?")
         return Entry(action.type, action.title, true, action.isCurrentAction, confirm = confirm) {
             withoutPopups(unit) {
                 UnitActions.getUnitActions(unit, UnitActionType.FoundCity).firstOrNull { it.action != null }?.action?.invoke()
@@ -141,7 +141,7 @@ object UnitOrders {
         val raw = withoutPopups(unit) { UnitActions.getUnitActions(unit, UnitActionType.Pillage).firstOrNull() } ?: return null
         val improvement = unit.currentTile.getImprovementToPillageName()
         return Entry(UnitActionType.Pillage, raw.title, raw.action != null, raw.isCurrentAction,
-            confirm = improvement?.let { "Are you sure you want to pillage this $it?" }) {
+            confirm = improvement?.let { Lang.t("Are you sure you want to pillage this [$it]?") }) {
             withoutPopups(unit) { UnitActions.getUnitActions(unit, UnitActionType.Pillage).firstOrNull { it.action != null }?.action?.invoke() }
         }
     }
@@ -162,7 +162,7 @@ object UnitOrders {
     private fun addFortify(unit: MapUnit, result: MutableList<Entry>) {
         if (unit.isFortified()) {
             val type = if (unit.isActionUntilHealed()) UnitActionType.FortifyUntilHealed else UnitActionType.Fortify
-            result.add(Entry(type, "Fortification ${unit.getFortificationTurns() * 20}%", false, true))
+            result.add(Entry(type, "{Fortification} ${unit.getFortificationTurns() * 20}%", false, true))
             return
         }
         if (!unit.canFortify() || !unit.hasMovement()) return
@@ -212,8 +212,8 @@ object UnitOrders {
     }
 
     private fun disband(unit: MapUnit): Entry {
-        val text = if (unit.currentTile.getOwner() == unit.civ) "Disband this unit for ${unit.baseUnit.getDisbandGold(unit.civ)} gold?"
-            else "Do you really want to disband this unit?"
+        val text = if (unit.currentTile.getOwner() == unit.civ) Lang.t("Disband this unit for [${unit.baseUnit.getDisbandGold(unit.civ)}] gold?")
+            else Lang.t("Do you really want to disband this unit?")
         return Entry(UnitActionType.DisbandUnit, UnitActionType.DisbandUnit.value, unit.hasMovement(), false, confirm = text) {
             unit.disband()
             unit.civ.updateStatsForNextTurn()   // less upkeep
@@ -224,7 +224,8 @@ object UnitOrders {
         putJsonArray("actions") {
             for (entry in entries) addJsonObject {
                 put("type", entry.type.name)
-                put("title", Gameplay.plain(entry.title))
+                put("title", Gameplay.stripBrackets(entry.title))   // what the client sends back to pick this one
+                put("label", Lang.t(entry.title))                   // what it shows
                 put("enabled", entry.enabled)
                 put("current", entry.current)
                 // The sound Unciv plays for this action (fortify, promote, chimes...), for the client
@@ -249,7 +250,7 @@ object UnitOrders {
     fun run(unit: MapUnit, typeName: String, title: String?, target: HexCoord?, confirmed: Boolean): JsonObject {
         val candidates = list(unit).filter { it.type.name == typeName }
         if (candidates.isEmpty()) throw BridgeException("${Gameplay.plain(unit.displayName())} can't do $typeName right now")
-        val entry = candidates.firstOrNull { title == null || Gameplay.plain(it.title) == Gameplay.plain(title) } ?: candidates.first()
+        val entry = candidates.firstOrNull { title == null || Gameplay.stripBrackets(it.title) == Gameplay.stripBrackets(title) } ?: candidates.first()
         if (!entry.enabled || entry.run == null) throw BridgeException("${Gameplay.plain(unit.displayName())} can't do ${Gameplay.plain(entry.title)} right now")
         if (entry.confirm != null && !confirmed) return buildJsonObject {
             put("done", false)

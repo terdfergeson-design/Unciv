@@ -17,7 +17,7 @@ import java.io.File
  * or simply `gradlew :bridge:run` from the repository root.
  */
 object BridgeMain {
-    const val PROTOCOL_VERSION = 23
+    const val PROTOCOL_VERSION = 24
 
     /** The bridge's own folder (saves, the last game setup): ~/.unciv-vr */
     val dataDir = File(System.getProperty("user.home"), ".unciv-vr")
@@ -76,5 +76,6 @@ object BridgeMain {
         val startMs = System.currentTimeMillis()
         RulesetCache.loadRulesets(consoleMode = rulesetsFromWorkingDir, noMods = true)
         println("Loaded rulesets ${RulesetCache.keys.sorted()} in ${System.currentTimeMillis() - startMs}ms")
+        Lang.init()
     }
 }

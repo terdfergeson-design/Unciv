@@ -34,13 +34,13 @@ object Gameplay {
         if (!civ.isCurrentPlayer() || civ.isDefeated()) return list
         val civView = GameView(game, civ).civView
         fun add(type: String, text: String, extra: JsonObjectBuilder.() -> Unit = {}) =
-            list.add(buildJsonObject { put("type", type); put("text", text); extra() })
+            list.add(buildJsonObject { put("type", type); put("text", Lang.t(text)); extra() })
 
-        if (alertsToAnswer > 0) add("AnswerAlerts", if (alertsToAnswer == 1) "Answer the message" else "Answer $alertsToAnswer messages")
+        if (alertsToAnswer > 0) add("AnswerAlerts", if (alertsToAnswer == 1) "Answer the message" else "Answer [$alertsToAnswer] messages")
         if (civ.greatPeople.freeGreatPeople > 0 && civ.greatPeople.getFreeGreatPersonOptions().isNotEmpty())
             add("PickGreatPerson", "Choose a free great person")
         civView.cities().firstOrNull { !it.isPuppet() && it.currentConstructionName().isEmpty() }?.let { city ->
-            add("PickConstruction", "Pick construction: ${city.name}") {
+            add("PickConstruction", "{Pick construction}: {${city.name}}") {
                 put("city", city.name)
                 put("x", city.location.x)
                 put("y", city.location.y)
@@ -48,18 +48,18 @@ object Gameplay {
         }
         if (civView.shouldOpenTechPicker()) add("PickTech", "Pick a tech")
         if (civView.shouldShowPolicyPicker()) add("PickPolicy", "Pick a policy")
-        if (game.isEspionageEnabled() && civView.shouldShowMoveSpies()) add("MoveSpies", "Move spies")
+        if (game.isEspionageEnabled() && civView.shouldShowMoveSpies()) add("MoveSpies", "Move Spies")
         when {
-            civView.canFoundPantheon() -> add("FoundPantheon", "Found a pantheon")
-            civView.canExpandPantheon() -> add("ExpandPantheon", "Expand your pantheon")
-            civView.isFoundingReligion() -> add("FoundReligion", "Found your religion")
-            civView.isEnhancingReligion() -> add("EnhanceReligion", "Enhance your religion")
-            civView.hasFreeBeliefs() -> add("ReformReligion", "Reform your religion")
+            civView.canFoundPantheon() -> add("FoundPantheon", "Found Pantheon")
+            civView.canExpandPantheon() -> add("ExpandPantheon", "Expand Pantheon")
+            civView.isFoundingReligion() -> add("FoundReligion", "Found Religion")
+            civView.isEnhancingReligion() -> add("EnhanceReligion", "Enhance a Religion")
+            civView.hasFreeBeliefs() -> add("ReformReligion", "Reform Religion")
         }
-        if (civView.mayVoteForDiplomaticVictory()) add("WorldCongressVote", "Vote for world leader")
+        if (civView.mayVoteForDiplomaticVictory()) add("WorldCongressVote", "Vote for World Leader")
         if (checkDueUnits) {
             val due = civView.dueUnitsCount()
-            if (due > 0) add("NextUnit", if (due == 1) "1 unit needs orders" else "$due units need orders") {
+            if (due > 0) add("NextUnit", if (due == 1) "1 unit needs orders" else "[$due] units need orders") {
                 civ.units.getDueUnits().firstOrNull()?.let {
                     put("unitId", it.id)
                     put("x", it.getTile().position.x)
@@ -125,7 +125,7 @@ object Gameplay {
         val (unBuilding, unOwner) = civ.victoryManager.getUNBuildingAndOwnerNames()
         val breakdown = civ.victoryManager.getDiplomaticVictoryVoteBreakdown()
         return buildJsonObject {
-            put("summary", breakdown.winnerText)
+            put("summary", breakdown.winnerText)   // translated where it's shown (Alerts)
             putJsonArray("civs") {
                 for (other in game.getCivsSorted(civToSortFirst = civ)) addJsonObject {
                     put("name", other.civName)
@@ -171,16 +171,16 @@ object Gameplay {
                 put("victoryType", data.victoryType)
                 put("turn", data.victoryTurn)
                 put("isYou", winner == viewer)
-                put("text", if (winner == viewer) victory.victoryString else victory.defeatString)
+                put("text", Lang.t(if (winner == viewer) victory.victoryString else victory.defeatString))
             }
         }
-        if (game.victoryData == null && viewer.isDefeated()) put("defeatText", Victory().defeatString)
+        if (game.victoryData == null && viewer.isDefeated()) put("defeatText", Lang.t(Victory().defeatString))
 
         // Our status: each victory's milestones, the one being worked on with its steps
         putJsonArray("ourStatus") {
             for (victory in victories) addJsonObject {
                 put("name", victory.name)
-                put("header", victory.victoryScreenHeader)
+                put("header", Lang.t(victory.victoryScreenHeader))
                 var firstIncomplete = true
                 putJsonArray("milestones") {
                     for (milestone in victory.milestoneObjects) addJsonObject {
@@ -194,7 +194,7 @@ object Gameplay {
                         put("text", plain(safe { milestone.getVictoryScreenButtonHeaderText(done, viewer) } ?: milestone.uniqueDescription))
                         if (status == "partial") putJsonArray("steps") {
                             for ((text, achieved) in milestoneSteps(milestone, victory, viewer)) addJsonObject {
-                                put("text", text)
+                                put("text", Lang.t(text))
                                 put("done", achieved)
                             }
                         }
@@ -230,7 +230,7 @@ object Gameplay {
         putJsonArray("rankings") {
             for (type in rankingTypes) addJsonObject {
                 put("type", type.name)
-                put("label", type.label)
+                put("label", Lang.t(type.label))
                 putJsonArray("civs") {
                     for (civ in visible.sortedBy { it.civName }.sortedByDescending { if (it.isDefeated()) Int.MIN_VALUE else it.getStatForRanking(type) }) addJsonObject {
                         writeCivName(civ, viewer)
@@ -255,7 +255,7 @@ object Gameplay {
             val alive = majors.filter { it.isAlive() }
             for (type in rankingTypes) addJsonObject {
                 put("type", type.name)
-                put("label", type.label)
+                put("label", Lang.t(type.label))
                 val values = alive.map { it to it.getStatForRanking(type) }.sortedByDescending { it.second }
                 put("value", viewer.getStatForRanking(type))
                 put("rank", values.indexOfFirst { it.first == viewer } + 1)
@@ -276,7 +276,11 @@ object Gameplay {
     }
 
     /** Unciv's untranslated text keeps its translation markers ({...} and [...]): drop them. */
-    fun plain(text: String) = text.replace("{", "").replace("}", "").replace("[", "").replace("]", "")
+    /** Text for people to read: Unciv's translation in the chosen language (see [Lang.t]). */
+    fun plain(text: String) = Lang.t(text)
+
+    /** Unciv's text with its {} and [] marks taken out, untranslated (for matching names, and when translating fails). */
+    fun stripBrackets(text: String) = text.replace("{", "").replace("}", "").replace("[", "").replace("]", "")
 
     private fun <T> safe(block: () -> T): T? = try { block() } catch (ex: Exception) { System.err.println("Victory screen: $ex"); null }
 
@@ -298,7 +302,7 @@ object Gameplay {
                     if (other == civ || !other.isMajorCiv()) continue
                     if (hideCount && !civ.knows(other)) continue
                     val name = if (civ.knows(other) || other.isDefeated()) other.civName else Constants.unknownNationName
-                    steps.add("Destroy $name" to other.isDefeated())
+                    steps.add("Destroy [$name]" to other.isDefeated())
                 }
                 if (hideCount) steps.add("Destroy ? * ${Constants.unknownNationName}" to false)
             }
@@ -309,10 +313,10 @@ object Gameplay {
                     if (city != null) {
                         val known = civ.hasExplored(city.getCenterTile())
                         if (hideCount && !known) continue
-                        steps.add("Capture ${if (known) city.name else Constants.unknownCityName}" to (city.civ == civ))
+                        steps.add("Capture [${if (known) city.name else Constants.unknownCityName}]" to (city.civ == civ))
                     } else {
                         val name = if (civ.knows(other) || other.isDefeated()) other.civName else Constants.unknownNationName
-                        steps.add("Destroy $name" to other.isDefeated())
+                        steps.add("Destroy [$name]" to other.isDefeated())
                     }
                 }
                 if (hideCount) steps.add("Capture ? * ${Constants.unknownCityName}" to false)
@@ -339,7 +343,7 @@ object Gameplay {
                     if (hideCount && !civ.knows(other)) continue
                     val name = if (civ.knows(other)) other.civName else Constants.unknownNationName
                     val met = religion != null && (!religion.isPantheon() || civ == other) && other.religionManager.isMajorityReligionForCiv(religion)
-                    steps.add("Majority religion of $name" to met)
+                    steps.add("Majority religion of [$name]" to met)
                 }
             }
             else -> {}

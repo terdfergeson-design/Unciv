@@ -255,7 +255,7 @@ class GameSession {
         "diplomacyAction" -> {
             val message = DiplomacyActions.act(viewer(), findKnownCiv(params), params.requireStr("action"), params)
             buildJsonObject {
-                put("message", message)
+                put("message", Lang.t(message))
                 put("diplomacy", StateWriter.diplomacy(viewer()))
             }
         }
@@ -268,6 +268,9 @@ class GameSession {
         "setResearch" -> setResearch(params)
         "promote" -> promote(params)
         "setSettings" -> setSettings(params)
+        // v24: languages
+        "getLanguages" -> Lang.languages()
+        "getTranslations" -> Lang.dictionary()
         "endTurn" -> endTurn()
         // v22: the Civilopedia and the tutorials
         "getCivilopedia" -> Civilopedia.categories(gameInfo)
@@ -388,7 +391,7 @@ class GameSession {
                         put("outerColor", it.getOuterColor().toString())
                         put("innerColor", it.getInnerColor().toString())
                         put("uniqueName", it.uniqueName)
-                        put("uniqueText", it.uniqueText.ifEmpty { it.uniques.joinToString("\n") })
+                        put("uniqueText", Lang.lines(it.uniqueText.ifEmpty { it.uniques.joinToString("\n") }))
                     }
                 }
             }
@@ -586,7 +589,7 @@ class GameSession {
         else civ.getDiplomacyManager(other)?.setFlag(DiplomacyFlags.DeclinedPeace, 3)
         return buildJsonObject {
             put("accepted", accepted)
-            put("message", if (accepted) "${other.civName} agrees to peace." else "${other.civName} refuses peace for now.")
+            put("message", Lang.t(if (accepted) "[${other.civName}] agrees to peace." else "[${other.civName}] refuses peace for now."))
             put("diplomacy", StateWriter.diplomacy(civ))
         }
     }
@@ -811,7 +814,7 @@ class GameSession {
         if (!unitView.tryMovePreparingAttack(attackable))
             return buildJsonObject {
                 put("attacked", false)
-                put("message", "${Gameplay.plain(unit.displayName())} moved into position but can't attack any more this turn")
+                put("message", Lang.t("[${unit.displayName()}] moved into position but can't attack any more this turn"))
             }
         val damage = unitView.attackOrNuke(attackable)
         val attackerAlive = unit.civ.units.getCivUnits().any { it === unit }
@@ -992,9 +995,12 @@ class GameSession {
         params.int("turnsBetweenAutosaves")?.let { settings.turnsBetweenAutosaves = it.coerceAtLeast(1) }
         // v22: Options > Display > Show tutorials, and Reset tutorials
         params.bool("showTutorials")?.let { Tutorials.enabled = it }
+        // v24: the language (Unciv's name for it, as getLanguages lists them)
+        params.str("language")?.let { Lang.set(it) }
         if (params.bool("resetTutorials") == true) Tutorials.reset()
         return buildJsonObject {
             put("showTutorials", Tutorials.enabled)
+            put("language", Lang.language)
             for ((key, property) in flags) put(key, property.get())
             put("checkForDueUnits", checkForDueUnits)
             put("notificationsLogMaxTurns", settings.notificationsLogMaxTurns)
@@ -1242,7 +1248,7 @@ class GameSession {
             putJsonArray("notifications") {
                 next.notifications.forEach {
                     addJsonObject {
-                        put("text", it.text)
+                        put("text", Lang.t(it.text))
                         put("category", it.category.name)
                     }
                 }

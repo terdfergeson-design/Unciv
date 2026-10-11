@@ -48,6 +48,8 @@ object Alerts {
         /** Has to be answered before the turn can end (Unciv's popup is modal; these can't simply be closed) */
         val needsAnswer: Boolean,
         val civ: Civilization? = null,
+        /** [text] is translated already (it has text Unciv translates itself in it) */
+        val textTranslated: Boolean = false,
         val extra: JsonObjectBuilder.() -> Unit = {},
     )
 
@@ -60,8 +62,9 @@ object Alerts {
             buildJsonObject {
                 put("key", alert.key)
                 put("type", alert.type)
-                put("title", alert.title)
-                put("text", alert.text)
+                // Translated once, here: the texts above are written the way Unciv's translation files have them
+                put("title", Lang.t(alert.title))
+                put("text", if (alert.textTranslated) alert.text else Lang.t(alert.text))
                 put("needsAnswer", alert.needsAnswer)
                 alert.civ?.let { civ ->
                     put("civ", civ.civName)
@@ -72,8 +75,8 @@ object Alerts {
                 putJsonArray("options") {
                     for (option in alert.options) addJsonObject {
                         put("id", option.id)
-                        put("label", option.label)
-                        if (option.description.isNotEmpty()) put("description", option.description)
+                        put("label", Lang.t(option.label))
+                        if (option.description.isNotEmpty()) put("description", Lang.t(option.description))
                         put("enabled", option.enabled)
                     }
                 }
@@ -121,7 +124,7 @@ object Alerts {
         }
         for (request in viewer.tradeRequests) {
             val other = game.civilizations.firstOrNull { it.civID == request.requestingCiv } ?: continue
-            result.add(Alert("TradeRequest|${other.civID}", "TradeRequest", "${other.civName}'s trade offer",
+            result.add(Alert("TradeRequest|${other.civID}", "TradeRequest", "[${other.civName}]'s trade offer",
                 other.nation.tradeRequest.ifEmpty { "Would you be interested in this deal?" },
                 listOf(Option("accept", "Sounds good!"), Option("decline", "Not this time."),
                     Option("counter", "How about something else...")),
@@ -146,7 +149,7 @@ object Alerts {
         return when (popup.type) {
             AlertType.CityConquered -> {
                 val city = city(game, value) ?: return null
-                Alert(key, type, "What would you like to do with the city of ${city.name}?", "", conquestOptions(city, viewer),
+                Alert(key, type, "What would you like to do with the city of [${city.name}]?", "", conquestOptions(city, viewer),
                     needsAnswer = true) { put("city", city.name); put("x", city.location.x); put("y", city.location.y) }
             }
             AlertType.CityTraded -> {
@@ -154,10 +157,10 @@ object Alerts {
                 val founder = city.foundingCivObject
                 val options = ArrayList<Option>()
                 if (founder != null && !viewer.isAtWarWith(founder))
-                    options.add(Option("liberate", "Liberate (city returns to ${founder.civName})",
+                    options.add(Option("liberate", "Liberate (city returns to [${founder.civName}])",
                         "Liberating a city returns it to its original owner, giving you a massive relationship boost with them!"))
                 options.add(Option("keep", "Keep it"))
-                Alert(key, type, "What would you like to do with the city of ${city.name}?", "", options, needsAnswer = true) {
+                Alert(key, type, "What would you like to do with the city of [${city.name}]?", "", options, needsAnswer = true) {
                     put("city", city.name); put("x", city.location.x); put("y", city.location.y)
                 }
             }
@@ -166,13 +169,13 @@ object Alerts {
                 val mayAnnex = !viewer.hasUnique(UniqueType.MayNotAnnexCities)
                 val options = if (viewer.isOneCityChallenger()) listOf(Option("destroy", "Destroy", "Destroying the city instantly razes the city to the ground."))
                     else listOf(annexOption(mayAnnex), puppetOption(mayAnnex))
-                Alert(key, type, "${city.name}: What would you like to do with the city?", "", options, needsAnswer = true) {
+                Alert(key, type, "{${city.name}}: {What would you like to do with the city?}", "", options, needsAnswer = true) {
                     put("city", city.name); put("x", city.location.x); put("y", city.location.y)
                 }
             }
             AlertType.FirstContact -> {
                 val other = civ(game, value) ?: return null
-                if (other.isCityState) info("First contact", "We have encountered the City-State of ${other.nation.name}!", other, "Excellent!")
+                if (other.isCityState) info("First contact", "We have encountered the City-State of [${other.nation.name}]!", other, "Excellent!")
                 else info("First contact", other.nation.introduction, other, "A pleasure to meet you.")
             }
             AlertType.WarDeclaration -> {
@@ -246,7 +249,7 @@ object Alerts {
                 if (other.isDefeated() || other.getDiplomacyManager(viewer)!!.diplomaticStatus == DiplomaticStatus.War) return null
                 Alert(key, type, "DECLARATION OF FRIENDSHIP",
                     other.nation.declaringFriendship.ifEmpty { "My friend, shall we declare our friendship to the world?" },
-                    listOf(Option("accept", "Declare Friendship (30 turns)"), Option("decline", "We are not interested.")),
+                    listOf(Option("accept", "Declare Friendship ([30] turns)"), Option("decline", "We are not interested.")),
                     needsAnswer = true, civ = other)
             }
             AlertType.BulliedProtectedMinor, AlertType.AttackedProtectedMinor, AlertType.AttackedAllyMinor -> {
@@ -257,22 +260,24 @@ object Alerts {
                 val nice = bully.getDiplomacyManager(viewer)!!.isRelationshipLevelGE(RelationshipLevel.Neutral)
                 val text = when {
                     popup.type == AlertType.BulliedProtectedMinor && nice ->
-                        "I've been informed that my armies have taken tribute from $cityState, a city-state under your protection.\nI assure you, this was quite unintentional, and I hope that this does not serve to drive us apart."
+                        "I've been informed that my armies have taken tribute from [$cityState], a city-state under your protection.\nI assure you, this was quite unintentional, and I hope that this does not serve to drive us apart."
                     popup.type == AlertType.BulliedProtectedMinor ->
-                        "We asked $cityState for a tribute recently and they gave in.\nYou promised to protect them from such things, but we both know you cannot back that up."
-                    nice -> "It's come to my attention that I may have attacked $cityState.\nWhile it was not my goal to be at odds with your empire, this was deemed a necessary course of action."
-                    else -> "I thought you might like to know that I've launched an invasion of one of your little pet states.\nThe lands of $cityState will make a fine addition to my own."
+                        "We asked [$cityState] for a tribute recently and they gave in.\nYou promised to protect them from such things, but we both know you cannot back that up."
+                    nice -> "It's come to my attention that I may have attacked [$cityState].\nWhile it was not my goal to be at odds with your empire, this was deemed a necessary course of action."
+                    else -> "I thought you might like to know that I've launched an invasion of one of your little pet states.\nThe lands of [$cityState] will make a fine addition to my own."
                 }
                 Alert(key, type, bully.civName, text, listOf(close("You'll pay for this!"), close("Very well.")), needsAnswer = false, civ = bully)
             }
             AlertType.Defeated -> {
                 val other = civ(game, value) ?: return null
-                info("${other.civName} has been defeated", other.nation.defeated, other, "Farewell.")
+                info("{${other.civName}}: {Defeated}", other.nation.defeated, other, "Farewell.")
             }
             AlertType.WonderBuilt -> {
                 val wonder = game.ruleset.buildings[value] ?: return null
-                info(wonder.name, listOf(wonder.quote, try { wonder.getShortDescription() } catch (_: Exception) { "" })
-                    .filter { it.isNotBlank() }.joinToString("\n\n")) { put("wonder", wonder.name) }
+                // The short description comes translated from Unciv; the quote is translated here
+                Alert(key, type, wonder.name, listOf(Lang.t(wonder.quote), try { wonder.getShortDescription() } catch (_: Exception) { "" })
+                    .filter { it.isNotBlank() }.joinToString("\n\n"), listOf(close()), needsAnswer = false,
+                    extra = { put("wonder", wonder.name) }, textTranslated = true)
             }
             AlertType.TechResearched -> {
                 val tech = game.ruleset.technologies[value] ?: return null
@@ -280,14 +285,14 @@ object Alerts {
             }
             AlertType.GoldenAge -> info("GOLDEN AGE", "Your citizens have been happy with your rule for so long that the empire enters a Golden Age!")
             AlertType.StartIntro -> info(viewer.civName, listOf(viewer.nation.startIntroPart1, viewer.nation.startIntroPart2)
-                .filter { it.isNotBlank() }.joinToString("\n\n"), viewer, "Let's begin!")
+                .filter { it.isNotBlank() }.joinToString("\n\n") { "{$it}" }, viewer, "Let's begin!")
             AlertType.RecapturedCivilian -> {
                 val tile = game.tileMap[HexCoord.fromString(value)]
                 val unit = tile.civilianUnit ?: return null
                 val owner = unit.originalOwningCiv ?: return null
                 if (owner.isDefeated()) return null
-                Alert(key, type, "Return ${unit.name} to ${owner.civName}?",
-                    "The ${unit.name} we liberated originally belonged to ${owner.civName}. They will be grateful if we return it to them.",
+                Alert(key, type, "Return [${unit.name}] to [${owner.civName}]?",
+                    "The [${unit.name}] we liberated originally belonged to [${owner.civName}]. They will be grateful if we return it to them.",
                     listOf(Option("yes", "Yes"), Option("no", "No")), needsAnswer = true, civ = owner) {
                     put("x", tile.position.x); put("y", tile.position.y)
                 }
@@ -295,7 +300,7 @@ object Alerts {
             AlertType.GameHasBeenWon -> {
                 val data = game.victoryData ?: return null
                 val winner = game.civilizations.firstOrNull { it.civID == data.winningCiv }?.civName ?: data.winningCiv
-                Alert(key, type, "Victory", "$winner has won a ${data.victoryType} Victory!",
+                Alert(key, type, "Victory", "[$winner] has won a [${data.victoryType}] Victory!",
                     listOf(Option("victory", "Victory status"), close()), needsAnswer = false)
             }
             AlertType.Event -> {
@@ -314,12 +319,12 @@ object Alerts {
     }
 
     private fun annexOption(mayAnnex: Boolean) = Option("annex", "Annex",
-        if (mayAnnex) "Annexed cities become part of your regular empire. Their citizens generate 2x the unhappiness, unless you build a courthouse."
+        if (mayAnnex) Lang.sentences("Annexed cities become part of your regular empire.", "Their citizens generate 2x the unhappiness, unless you build a courthouse.")
         else "Your civilization may not annex this city.", enabled = mayAnnex)
 
     private fun puppetOption(mayAnnex: Boolean) = Option("puppet", "Puppet",
-        "Puppeted cities do not increase your tech or policy cost. You have no control over the production of puppeted cities. " +
-            "Puppeted cities also generate 25% less Science and Culture." + if (mayAnnex) " A puppeted city can be annexed at any time." else "")
+        Lang.sentences("Puppeted cities do not increase your tech or policy cost.", "You have no control over the production of puppeted cities.",
+            "Puppeted cities also generate 25% less Science and Culture.", if (mayAnnex) "A puppeted city can be annexed at any time." else ""))
 
     private fun conquestOptions(city: City, viewer: Civilization): List<Option> {
         val options = ArrayList<Option>()
@@ -328,7 +333,7 @@ object Alerts {
         // so "the city belonged to someone other than its founder" is about its previous owner
         val ownerBefore = if (city.civ == viewer) city.previousOwner else city.civ.civID
         if (founder != null && founder != viewer && ownerBefore != founder.civID)
-            options.add(Option("liberate", "Liberate (city returns to ${founder.civName})",
+            options.add(Option("liberate", "Liberate (city returns to [${founder.civName}])",
                 "Liberating a city returns it to its original owner, giving you a massive relationship boost with them!"))
         if (viewer.isOneCityChallenger()) {
             options.add(Option("destroy", "Destroy", "Destroying the city instantly razes the city to the ground."))
@@ -340,8 +345,8 @@ object Alerts {
         val canRaze = city.canBeDestroyed(justCaptured = true)
         options.add(Option("raze", "Raze", when {
             !canRaze -> "Original capitals and holy cities cannot be razed."
-            mayAnnex -> "Razing the city annexes it, and starts burning the city to the ground. The population will gradually dwindle until the city is destroyed."
-            else -> "Razing the city puppets it, and starts burning the city to the ground. The population will gradually dwindle until the city is destroyed."
+            mayAnnex -> Lang.sentences("Razing the city annexes it, and starts burning the city to the ground.", "The population will gradually dwindle until the city is destroyed.")
+            else -> Lang.sentences("Razing the city puppets it, and starts burning the city to the ground.", "The population will gradually dwindle until the city is destroyed.")
         }, enabled = canRaze))
         return options
     }
@@ -371,7 +376,7 @@ object Alerts {
             AlertType.CityTraded -> if (optionId == "liberate") {
                 val city = city(game, value)!!
                 city.liberateCity(viewer)
-                message = "${city.name} returns to ${city.civ.civName}."
+                message = "[${city.name}] returns to [${city.civ.civName}]."
             }
             AlertType.DiplomaticMarriage -> {
                 val city = city(game, value)!!
@@ -397,7 +402,7 @@ object Alerts {
             AlertType.DeclarationOfFriendship -> {
                 val other = civ(game, value)!!
                 val diplomacy = viewer.getDiplomacyManager(other)!!
-                if (optionId == "accept") { diplomacy.signDeclarationOfFriendship(); message = "You and ${other.civName} are now friends." }
+                if (optionId == "accept") { diplomacy.signDeclarationOfFriendship(); message = "You and [${other.civName}] are now friends." }
                 else diplomacy.otherCivDiplomacy().setFlag(DiplomacyFlags.DeclinedDeclarationOfFriendship, 20)
             }
             AlertType.RecapturedCivilian -> message = returnCivilian(game, viewer, value, optionId == "yes")
@@ -415,7 +420,7 @@ object Alerts {
         return status(message)
     }
 
-    private fun status(message: String) = buildJsonObject { put("message", message) }
+    private fun status(message: String) = buildJsonObject { put("message", Lang.t(message)) }
 
     /**
      * Unciv asks the conqueror what to do with a city. Without Unciv's world screen its battle code has already made
@@ -441,7 +446,7 @@ object Alerts {
                 for (name in buildings) if (!city.cityConstructions.isBuilt(name)) city.cityConstructions.addBuilding(name)
                 if (city.population.population < population) city.population.setPopulation(population)
                 city.cityStats.update()
-                return "${city.name} returns to ${city.civ.civName}."
+                return "[${city.name}] returns to [${city.civ.civName}]."
             }
             "destroy" -> city.destroyCity(overrideSafeties = true)
             "annex" -> { city.isBeingRazed = false; city.annexCity() }
@@ -459,10 +464,10 @@ object Alerts {
             }
         }
         return when (choice) {
-            "annex" -> "${city.name} is now part of your empire."
-            "puppet" -> "${city.name} is now a puppet."
-            "raze" -> "${city.name} is being razed."
-            "destroy" -> "${city.name} was destroyed."
+            "annex" -> "[${city.name}] is now part of your empire."
+            "puppet" -> "[${city.name}] is now a puppet."
+            "raze" -> "[${city.name}] is being razed."
+            "destroy" -> "[${city.name}] was destroyed."
             else -> ""
         }
     }
@@ -483,7 +488,7 @@ object Alerts {
         else if (owner.isMajorCiv()) owner.getDiplomacyManagerOrMeet(captor).setModifier(DiplomaticModifiers.ReturnedCapturedUnits, 20f)
         owner.addNotification("Your captured [$unitName] has been returned by [${captor.civName}]", tile.position,
             NotificationCategory.Diplomacy, NotificationIcon.Trade, unitName, captor.civName)
-        return "The $unitName goes back to ${owner.civName}."
+        return "The [$unitName] goes back to [${owner.civName}]."
     }
 
     private fun answerTrade(game: GameInfo, viewer: Civilization, civId: String, optionId: String): JsonObject {
@@ -496,7 +501,7 @@ object Alerts {
                 logic.currentTrade.set(request.trade)
                 logic.acceptTrade()
                 other.addNotification("[${viewer.civName}] has accepted your trade request", NotificationCategory.Trade, viewer.civName, NotificationIcon.Trade)
-                status("Excellent! The deal with ${other.civName} is done.")
+                status("Excellent! The deal with [${other.civName}] is done.")
             }
             "decline" -> {
                 request.decline(viewer)

@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v23)
+# Unciv bridge protocol (v24)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
@@ -75,6 +75,11 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v24** | | |
+| `getLanguages` | – | `language` (the current one), `languages[{name, label, tag, percent}]`: English and every language Unciv has a translation file for - `name` is Unciv's ("German", "Simplified_Chinese"), `tag` its IETF tag ("de-DE"), `percent` how complete Unciv's translation is |
+| `getTranslations` | – | `language`, `tag`, `entries{English: translated}`: every plain entry of the language's Unciv translation file (no placeholders) - unit, building, tech, nation, city and other names and Unciv's own words. Empty for English |
+| `setSettings` | also `language` (a `name` from `getLanguages`; loads its file the first time) | also `language` |
+| (all) | | Text for people to read now comes in the chosen language, through Unciv's translations (`tr()`): messages and popups (`alerts` title, text, option labels and descriptions), `blockers` text, notifications, status `message`s, descriptions, quests, victory texts, trade offer labels, unit `action`s... Text Unciv has no translation for stays English (with its names translated). Names that are also ids stay English everywhere (`name`, unit action `title`); unit actions gain `label`, the title translated, to show. In English, everything reads as before |
 | **v23** | | |
 | `getUnit` | | for a unit that can found a city, also `suggestedCitySpots[{x, y, value}]`: Unciv's suggested city locations (the three best explored tiles within 5, worth at least 50, as its map marks them) |
 | **v22** | | |

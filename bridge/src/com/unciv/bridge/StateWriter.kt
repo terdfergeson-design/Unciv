@@ -251,7 +251,7 @@ object StateWriter {
         put("range", unit.getRange())
         put("due", unit.due)
         put("canPromote", unit.canBePromoted())
-        ownUnitAction(unit)?.let { put("action", it) }
+        ownUnitAction(unit)?.let { put("action", Lang.t(it)) }
     }
 
     /** What a unit of yours is doing, in the words of Unciv's unit list, or null when it waits for orders. */
@@ -263,7 +263,7 @@ object StateWriter {
             unit.isSleeping() -> "Sleeping"
             unit.isExploring() -> "Exploring"
             unit.isMoving() -> "Moving"
-            building != null && unit.canBuildCurrentImprovement() -> "Building $building"
+            building != null && unit.canBuildCurrentImprovement() -> "Building [$building]"
             unit.isAutomated() -> "Automated"
             else -> null
         }
@@ -489,7 +489,7 @@ object StateWriter {
                 if (focus == CityFocus.FaithFocus && !religionEnabled) continue
                 addJsonObject {
                     put("name", focus.name)
-                    put("label", when (focus) { CityFocus.NoFocus -> "Default"; CityFocus.Manual -> "Manual"; else -> "" })
+                    put("label", Lang.t(when (focus) { CityFocus.NoFocus -> "Default"; CityFocus.Manual -> "Manual"; else -> "" }))
                     putJsonArray("stats") { focus.statValuesForFocus.forEach { add(it.name.lowercase()) } }
                 }
             }
@@ -890,14 +890,14 @@ object StateWriter {
         put("amount", offer.amount)
         put("duration", offer.duration)
         fun civName(id: String) = game.civilizations.firstOrNull { it.civID == id }?.civName ?: id
-        put("label", when (offer.type) {
+        put("label", Lang.t(when (offer.type) {
             com.unciv.logic.trade.TradeOfferType.City ->
-                game.getCities().firstOrNull { it.id == offer.name }?.let { "${it.name} (${it.population.population})" } ?: "A city"
-            com.unciv.logic.trade.TradeOfferType.WarDeclaration -> "Declare war on ${civName(offer.name)}"
-            com.unciv.logic.trade.TradeOfferType.PeaceProposal -> "Make peace with ${civName(offer.name)}"
-            com.unciv.logic.trade.TradeOfferType.Introduction -> "Introduction to ${civName(offer.name)}"
+                game.getCities().firstOrNull { it.id == offer.name }?.let { "{${it.name}} (${it.population.population})" } ?: "A city"
+            com.unciv.logic.trade.TradeOfferType.WarDeclaration -> "Declare war on [${civName(offer.name)}]"
+            com.unciv.logic.trade.TradeOfferType.PeaceProposal -> "Make peace with [${civName(offer.name)}]"
+            com.unciv.logic.trade.TradeOfferType.Introduction -> "Introduction to [${civName(offer.name)}]"
             else -> offer.name
-        })
+        }))
         put("countable", offer.type.numberType != com.unciv.logic.trade.TradeOfferType.TradeTypeNumberType.None)
     }
 

@@ -185,7 +185,7 @@ object Tutorials {
                 putJsonArray("options") {
                     addJsonObject {
                         put("id", if (last) "close" else "next")
-                        put("label", if (last) "Got it" else "Next")
+                        put("label", Lang.t(if (last) "Got it" else "Next"))
                         put("enabled", true)
                     }
                 }

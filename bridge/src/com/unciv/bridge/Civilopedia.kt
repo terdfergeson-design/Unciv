@@ -72,7 +72,7 @@ object Civilopedia {
                     if (list.isEmpty()) continue
                     addJsonObject {
                         put("key", category.name)
-                        put("label", category.label)
+                        put("label", text(category.label, hideIcons = true))
                         put("icon", category.headerIcon)
                         putJsonArray("entries") {
                             for (item in list) addJsonObject {

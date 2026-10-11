@@ -65,7 +65,7 @@ object DiplomacyActions {
                     if (!demand.show(viewer)) continue
                     addJsonObject {
                         put("id", demand.name)
-                        put("text", demand.demandText)
+                        put("text", Lang.t(demand.demandText))
                         val already = other.popupAlerts.any { it.type == demand.demandAlert && it.value == viewer.civID }
                         val agreed = ours.hasFlag(demand.agreedToDemand)
                         put("enabled", yourTurn && !already && !agreed)
@@ -76,16 +76,16 @@ object DiplomacyActions {
             putJsonArray("promises") {
                 for (demand in Demand.entries) {
                     if (theirs.hasFlag(demand.agreedToDemand))
-                        add(demand.wePromisedText.replace("[turns]", theirs.getFlag(demand.agreedToDemand).toString()))
+                        add(Lang.t(demand.wePromisedText.replace("[turns]", "[${theirs.getFlag(demand.agreedToDemand)}]")))
                     if (ours.hasFlag(demand.agreedToDemand))
-                        add(demand.theyPromisedText.replace("[turns]", ours.getFlag(demand.agreedToDemand).toString()))
+                        add(Lang.t(demand.theyPromisedText.replace("[turns]", "[${ours.getFlag(demand.agreedToDemand)}]")))
                 }
             }
             if (!other.isHuman()) putJsonArray("modifiers") {
                 for ((key, value) in theirs.diplomaticModifiers) {
                     if (key == DiplomaticModifiers.AttackedProtectedMinor.name && theirs.hasModifier(DiplomaticModifiers.DestroyedProtectedMinor)) continue
                     val modifier = DiplomaticModifiers.safeValueOf(key) ?: continue
-                    addJsonObject { put("text", modifier.text); put("value", value.toInt()) }
+                    addJsonObject { put("text", Lang.t(modifier.text)); put("value", value.toInt()) }
                 }
             }
             return@with
@@ -106,9 +106,9 @@ object DiplomacyActions {
         }
         put("nextLevel", when {
             atWar -> ""
-            influence < 30 -> "Reach 30 for friendship."
+            influence < 30 -> Lang.t("Reach 30 for friendship.")
             other.allyCiv == viewer -> ""
-            else -> "Reach highest influence above 60 for alliance."
+            else -> Lang.t("Reach highest influence above 60 for alliance.")
         })
         val level = theirs.relationshipIgnoreAfraid()
         if (level >= RelationshipLevel.Friend) {
@@ -167,7 +167,7 @@ object DiplomacyActions {
             putJsonArray("modifiers") {
                 val modifiers = functions.getTributeModifiers(viewer, requireWholeList = true)
                 for ((text, value) in modifiers) addJsonObject { put("text", Gameplay.plain(text)); put("value", value) }
-                addJsonObject { put("text", "Sum:"); put("value", modifiers.values.sum()) }
+                addJsonObject { put("text", Lang.t("Sum:")); put("value", modifiers.values.sum()) }
             }
         }
         // Diplomatic marriage (Austria)
@@ -193,9 +193,9 @@ object DiplomacyActions {
                 }
             }
             for (target in other.getKnownCivs().filter { other.questManager.isWarWithMajorActive(it) && it != viewer }) addJsonObject {
-                put("name", "War against ${target.civName}")
-                put("description", "We need you to help us defend against ${target.civName}. Killing ${other.questManager.unitsToKill(target)} of their military units would slow their offensive.")
-                put("progress", if (viewer.knows(target)) "Currently you have killed ${other.questManager.unitsKilledSoFar(target, viewer)} of their military units." else "You need to find them first!")
+                put("name", Lang.t("War against [${target.civName}]"))
+                put("description", Lang.t("We need you to help us defend against [${target.civName}]. Killing [${other.questManager.unitsToKill(target)}] of their military units would slow their offensive."))
+                put("progress", Lang.t(if (viewer.knows(target)) "Currently you have killed [${other.questManager.unitsKilledSoFar(target, viewer)}] of their military units." else "You need to find them first!"))
             }
         }
     }
@@ -255,19 +255,19 @@ object DiplomacyActions {
                 tile.stopWorkingOnImprovement()
                 tile.setImprovement(improvement, other)
                 other.cache.updateCivResources()
-                "Built a $name for ${other.civName}."
+                "Built a [$name] for [${other.civName}]."
             }
             "pledgeProtection" -> {
                 cityState(viewer, other)
                 if (!other.cityStateFunctions.otherCivCanPledgeProtection(viewer)) throw BridgeException("You can't pledge to protect ${other.civName} now")
                 other.cityStateFunctions.addProtectorCiv(viewer)
-                "You now protect ${other.civName}."
+                "You now protect [${other.civName}]."
             }
             "revokeProtection" -> {
                 cityState(viewer, other)
                 if (!other.cityStateFunctions.otherCivCanWithdrawProtection(viewer)) throw BridgeException("You can't withdraw protection yet")
                 other.cityStateFunctions.removeProtectorCiv(viewer)
-                "You no longer protect ${other.civName}."
+                "You no longer protect [${other.civName}]."
             }
             "tribute" -> {
                 cityState(viewer, other)
@@ -278,9 +278,9 @@ object DiplomacyActions {
                 if (worker) other.cityStateFunctions.tributeWorker(viewer) else {
                     val gold = other.cityStateFunctions.goldGainedByTribute()
                     other.cityStateFunctions.tributeGold(viewer)
-                    return "${other.civName} pays $gold gold."
+                    return "[${other.civName}] pays [$gold] gold."
                 }
-                "${other.civName} hands over a worker."
+                "[${other.civName}] hands over a worker."
             }
             "marriage" -> {
                 cityState(viewer, other)
@@ -289,7 +289,7 @@ object DiplomacyActions {
                 val cities = other.cities.toList()
                 other.cityStateFunctions.diplomaticMarriage(viewer)
                 for (city in cities) viewer.popupAlerts.add(PopupAlert(AlertType.DiplomaticMarriage, city.id))
-                "${other.civName} joins your empire."
+                "[${other.civName}] joins your empire."
             }
             "denounce" -> {
                 if (other.isCityState) throw BridgeException("City-states can't be denounced")
@@ -303,7 +303,7 @@ object DiplomacyActions {
                 if (viewer.isAtWarWith(other) || ours.hasFlag(DiplomacyFlags.DeclarationOfFriendship)) throw BridgeException("You can't offer friendship now")
                 if (other.popupAlerts.none { it.type == AlertType.DeclarationOfFriendship && it.value == viewer.civID })
                     other.popupAlerts.add(PopupAlert(AlertType.DeclarationOfFriendship, viewer.civID))
-                "Your offer of friendship has been sent - ${other.civName} will answer on their turn."
+                "Your offer of friendship has been sent - [${other.civName}] will answer on their turn."
             }
             "makeDemand" -> {
                 if (other.isCityState) throw BridgeException("Make demands of city-states with tribute")
@@ -311,7 +311,7 @@ object DiplomacyActions {
                 if (ours.hasFlag(demand.agreedToDemand)) throw BridgeException("They already agreed to that")
                 if (other.popupAlerts.none { it.type == demand.demandAlert && it.value == viewer.civID })
                     other.popupAlerts.add(PopupAlert(demand.demandAlert, viewer.civID))
-                "Your demand has been sent - ${other.civName} will answer on their turn."
+                "Your demand has been sent - [${other.civName}] will answer on their turn."
             }
             else -> throw BridgeException("Unknown diplomacy action '$action'")
         }
@@ -336,9 +336,9 @@ object DiplomacyActions {
             put("accepted", accepted)
             put("counteroffer", counter != null)
             put("message", when {
-                accepted -> "${other.civName} accepts the deal."
-                counter != null -> "${other.civName} makes a counteroffer."
-                else -> "${other.civName} turns the deal down."
+                accepted -> Lang.t("[${other.civName}] accepts the deal.")
+                counter != null -> Lang.t("[${other.civName}] makes a counteroffer.")
+                else -> Lang.t("[${other.civName}] turns the deal down.")
             })
             if (counter != null) {
                 put("counterKey", "TradeRequest|${other.civID}")

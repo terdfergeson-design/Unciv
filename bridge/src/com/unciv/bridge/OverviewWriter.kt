@@ -449,7 +449,7 @@ object OverviewWriter {
         put("enabled", game.isReligionEnabled())
         put("toFound", if (civ.shouldHideCivCount()) -1 else manager.remainingFoundableReligions())
         putJsonArray("toFoundBreakdown") {
-            for ((text, value) in manager.remainingFoundableReligionsBreakdown()) addJsonObject { put("text", text); put("value", value) }
+            for ((text, value) in manager.remainingFoundableReligionsBreakdown()) addJsonObject { put("text", Lang.t(text)); put("value", value) }
         }
         if (manager.canGenerateProphet(ignoreFaithAmount = true)) {
             manager.getGreatProphetEquivalent()?.let { put("prophet", it.name) }
@@ -459,7 +459,7 @@ object OverviewWriter {
         putJsonArray("religions") {
             for (religion in game.religions.values) addJsonObject {
                 put("name", religion.name)
-                put("displayName", religion.getReligionDisplayName())
+                put("displayName", Lang.t(religion.getReligionDisplayName()))
                 put("icon", religion.getIconName())
                 put("pantheon", religion.isPantheon())
                 val founder = religion.foundingCiv
@@ -476,7 +476,7 @@ object OverviewWriter {
                     for (belief in religion.getAllBeliefsOrdered()) addJsonObject {
                         put("name", belief.name)
                         put("type", belief.type.name)
-                        put("text", belief.getCivilopediaTextLines(withHeader = false).joinToString("\n") { it.text }.trim())
+                        put("text", belief.getCivilopediaTextLines(withHeader = false).joinToString("\n") { Lang.t(it.text) }.trim())
                     }
                 }
             }
@@ -499,8 +499,8 @@ object OverviewWriter {
                     put("group", w.groupName)
                     put("groupColor", w.groupColor.toString())
                     put("status", w.status.name)
-                    put("statusText", w.getStatusColumn())
-                    put("location", w.getLocationColumn())
+                    put("statusText", Lang.t(w.getStatusColumn()))
+                    put("location", Lang.t(w.getLocationColumn()))
                     val location = w.location
                     if (location != null && w.getLocationColumn().isNotEmpty()) { put("x", location.position.x); put("y", location.position.y) }
                 }
@@ -528,7 +528,7 @@ object OverviewWriter {
     }
 
     private fun notificationJson(notification: Notification): JsonObject = buildJsonObject {
-        put("text", notification.text)
+        put("text", Lang.t(notification.text))
         put("category", notification.category.name)
         putJsonArray("icons") { notification.icons.forEach { add(it) } }
         putJsonArray("actions") { notification.actions.forEach { add(actionJson(it)) } }

@@ -23,8 +23,8 @@ object Espionage {
             for (spy in manager.spyList) addJsonObject {
                 put("name", spy.name)
                 put("rank", spy.getEffectiveRank())
-                put("action", spy.action.displayString)
-                put("location", spy.getLocationName())
+                put("action", Lang.t(spy.action.displayString))
+                put("location", Lang.t(spy.getLocationName()))
                 spy.getCityOrNull()?.let { put("x", it.location.x); put("y", it.location.y) }
                 if (spy.action.showTurns) put("turns", spy.turnsRemainingForAction)
                 put("alive", spy.isAlive())
@@ -47,7 +47,7 @@ object Espionage {
                 put("own", city.civ == civ)
                 putJsonArray("spies") { manager.getSpiesInCity(city).forEach { add(it.name) } }
                 putJsonArray("canMoveHere") { manager.spyList.filter { it.isAlive() && it.canMoveTo(city) }.forEach { add(it.name) } }
-                if (promiseWarning(civ, city)) put("promiseWarning", "This may result in breaking your promise to ${city.civ.civName}")
+                if (promiseWarning(civ, city)) put("promiseWarning", Lang.t("This may result in breaking your promise to [${city.civ.civName}]"))
             }
         }
     }
@@ -64,7 +64,7 @@ object Espionage {
         if (city != null) {
             if (!spy.canMoveTo(city)) throw BridgeException("${spy.name} can't go to ${city.name}")
             if (promiseWarning(civ, city) && params.bool("confirm") != true)
-                return buildJsonObject { put("done", false); put("confirm", "This may result in breaking your promise to ${city.civ.civName}") }
+                return buildJsonObject { put("done", false); put("confirm", Lang.t("This may result in breaking your promise to [${city.civ.civName}]")) }
         }
         spy.moveTo(city)
         return buildJsonObject { put("done", true); put("espionage", overview(civ)) }
@@ -81,7 +81,7 @@ object Espionage {
         if (!spy.canDoCoup()) throw BridgeException("${spy.name} can't stage a coup there")
         if (params.bool("confirm") != true) return buildJsonObject {
             put("done", false)
-            put("confirm", "Do you want to stage a coup in ${spy.getCity().civ.civName} with a ${(spy.getCoupChanceOfSuccess(false) * 100f).toInt()}% chance of success?")
+            put("confirm", Lang.t("Do you want to stage a coup in [${spy.getCity().civ.civName}] with a [${(spy.getCoupChanceOfSuccess(false) * 100f).toInt()}]% chance of success?"))
         }
         spy.setAction(SpyAction.Coup, 1)
         return buildJsonObject { put("done", true); put("espionage", overview(civ)) }
