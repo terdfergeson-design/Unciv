@@ -35,7 +35,8 @@ class BridgeServer(private val port: Int, private val session: GameSession, priv
     @Volatile private var idleSince = System.currentTimeMillis()
 
     fun run() {
-        val serverSocket = ServerSocket(port, 4, InetAddress.getLoopbackAddress())
+        // 127.0.0.1 by name: on Android getLoopbackAddress() is the IPv6 one (::1), which the client doesn't dial
+        val serverSocket = ServerSocket(port, 4, InetAddress.getByName("127.0.0.1"))
         println("Unciv bridge listening on 127.0.0.1:$port (protocol v${BridgeMain.PROTOCOL_VERSION})")
         if (exitWhenIdleSeconds > 0) thread(name = "bridge-idle-watch", isDaemon = true) {
             while (true) {

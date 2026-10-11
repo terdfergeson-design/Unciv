@@ -305,7 +305,7 @@ class GameSession {
     }
 
     /** Unciv's "check for idle units before ending the turn" (setSettings checkForDueUnits) */
-    private var checkForDueUnits = false
+    private var checkForDueUnits = true
 
     /** What still has to be decided this turn, and the pending messages. Also part of getState. */
     private fun turnStatus(): JsonObject {

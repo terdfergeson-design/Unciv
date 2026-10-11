@@ -1,0 +1,25 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.unciv.bridge.android" >
+4
+5    <uses-sdk android:minSdkVersion="29" />
+5-->INJECTED
+5-->INJECTED
+6    <!-- The client talks to the bridge over a socket on 127.0.0.1, which needs this even for loopback -->
+7    <uses-permission android:name="android.permission.INTERNET" />
+7-->C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\AndroidManifest.xml:4:5-67
+7-->C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\AndroidManifest.xml:4:22-64
+8
+9    <application>
+9-->C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\AndroidManifest.xml:5:5-10:19
+10
+11        <!-- Godot Android plugin v2: Engine.get_singleton("UncivBridge") in GDScript -->
+12        <meta-data
+12-->C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\AndroidManifest.xml:7:9-9:74
+13            android:name="org.godotengine.plugin.v2.UncivBridge"
+13-->C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\AndroidManifest.xml:8:13-65
+14            android:value="com.unciv.bridge.android.UncivBridgePlugin" />
+14-->C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\AndroidManifest.xml:9:13-71
+15    </application>
+16
+17</manifest>

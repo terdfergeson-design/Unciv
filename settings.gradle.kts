@@ -20,4 +20,4 @@ private fun getSdkPath(): String? {
         System.getenv("ANDROID_HOME")
     }
 }
-if (getSdkPath() != null) include("android")
+if (getSdkPath() != null) include("android", "bridge-android")

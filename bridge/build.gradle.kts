@@ -60,3 +60,35 @@ tasks.register<Jar>("dist") {
         attributes(mapOf("Main-Class" to mainClassName))
     }
 }
+
+// The standalone Quest app (bridge-android): Unciv's core and the bridge as one jar, without their libraries...
+evaluationDependsOn(":core")
+tasks.register<Jar>("androidJar") {
+    description = "Unciv's core and the bridge, without libraries: bundled into the Quest app's UncivBridge plugin"
+    group = "build"
+    dependsOn(tasks.getByName("classes"), ":core:classes")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.get().output)
+    from(project(":core").extensions.getByType<SourceSetContainer>()["main"].output)
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/*.kotlin_module")
+    archiveFileName.set("unciv-bridge-android.jar")
+}
+
+// ...and the libraries they need, as Maven coordinates, for Godot's Android Gradle build to fetch
+tasks.register("androidDeps") {
+    description = "Writes build/libs/android-deps.txt: the bridge's libraries as group:name:version"
+    group = "build"
+    val out = layout.buildDirectory.file("libs/android-deps.txt")
+    outputs.file(out)
+    outputs.upToDateWhen { false }
+    doLast {
+        val ids = configurations.getByName("runtimeClasspath").incoming.resolutionResult.allComponents
+            .mapNotNull { it.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+            .map { "${it.group}:${it.module}:${it.version}" }
+            .distinct().sorted()
+        val file = out.get().asFile
+        file.parentFile.mkdirs()
+        file.writeText(ids.joinToString("\n") + "\n")
+        println("android-deps.txt: ${ids.size} libraries")
+    }
+}

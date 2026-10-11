@@ -54,8 +54,12 @@ object BridgeMain {
         BridgeServer(port, session, idleSeconds).run()
     }
 
-    /** Same minimal setup as Unciv's own ConsoleLauncher / unit tests: no window, no GL, no Gdx.app. */
-    private fun initUnciv() {
+    /**
+     * Same minimal setup as Unciv's own ConsoleLauncher / unit tests: no window, no GL, no Gdx.app.
+     * [rulesetsFromWorkingDir]: read the rulesets from ./jsons (the PC, run from android/assets); false reads them
+     * through Gdx.files.internal instead (the Quest app, where AndroidBridge points that at the unpacked assets).
+     */
+    internal fun initUnciv(rulesetsFromWorkingDir: Boolean = true) {
         if (Gdx.files == null) Gdx.files = HeadlessFiles()
         val game = UncivGame(true) // console mode: rulesets are read straight from the working directory
         UncivGame.Current = game
@@ -70,7 +74,7 @@ object BridgeMain {
             automatedUnitsMoveOnTurnStart = false
         }
         val startMs = System.currentTimeMillis()
-        RulesetCache.loadRulesets(consoleMode = true, noMods = true)
+        RulesetCache.loadRulesets(consoleMode = rulesetsFromWorkingDir, noMods = true)
         println("Loaded rulesets ${RulesetCache.keys.sorted()} in ${System.currentTimeMillis() - startMs}ms")
     }
 }
