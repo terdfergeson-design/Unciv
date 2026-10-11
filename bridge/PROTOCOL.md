@@ -76,6 +76,10 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
 | **v24** | | |
+| `debug` | also `command: autoPlay`: Unciv's AI plays your civ's turn (research, policies, production, units, diplomacy, religion); end it with `endTurn` - for `autoplay_test.py` | |
+| (errors) | | a failure that is a bug in the bridge, rather than a refusal, also carries `internal: true`, and its `error` names the exception and where it happened |
+| `setProduction` | `mode: now` on a building already in the queue moves it to the front | |
+| `chooseGreatPerson` | when there's no space next to the capital it fails as before, but the free great person then no longer stops this turn from ending (like Unciv's picker, which can be closed then) | |
 | `getLanguages` | – | `language` (the current one), `languages[{name, label, tag, percent}]`: English and every language Unciv has a translation file for - `name` is Unciv's ("German", "Simplified_Chinese"), `tag` its IETF tag ("de-DE"), `percent` how complete Unciv's translation is |
 | `getTranslations` | – | `language`, `tag`, `entries{English: translated}`: every plain entry of the language's Unciv translation file (no placeholders) - unit, building, tech, nation, city and other names and Unciv's own words. Empty for English |
 | `setSettings` | also `language` (a `name` from `getLanguages`; loads its file the first time) | also `language` |

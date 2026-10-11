@@ -24,6 +24,22 @@ python bridge/smoke_test.py
 
 This starts a game as Rome, founds a city, moves a warrior, plays 5 turns, then saves and reloads.
 
+## Playtest whole games with nobody playing
+`autoplay_test.py` plays complete games where Unciv's AI plays every civilization, yours included (Unciv's AutoPlay).
+Every turn it also asks the bridge everything the VR client would ask, does a few random things a player would do
+(moves, attacks, promotions, production changes, buying...), and answers the messages. Anything that crashes, or
+anything the bridge offered and then refused, is reported, with the game saved just before it so it can be
+reproduced. Start the bridge with debug commands on, then:
+
+```
+gradlew :bridge:run --args="--debug --port 8799"
+python bridge/autoplay_test.py --port 8799 --games 6 --map-size mix --ruleset mix --language mix
+```
+
+Other options: `--max-turns`, `--seed`, `--civ`, `--ai-players`, `--city-states`, `--tutorials`, `--no-actions`
+(only read), `--bridge-log <file>` (also lists the errors the bridge caught and carried on from). The report goes to
+`autoplay-report/report.md` (and `report.json`). A Tiny or Small game to the end takes well under a minute.
+
 ## Standalone jar
 `gradlew :bridge:dist` → `bridge/build/libs/UncivBridge.jar`. Run it from `android/assets`
 (Unciv reads its rulesets relative to the working directory):

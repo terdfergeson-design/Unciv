@@ -78,6 +78,14 @@ object DebugCommands {
                 civ.flagsCountdown[com.unciv.logic.civilization.CivFlags.TurnsTillNextDiplomaticVote.name] = 0
                 "ok"
             }
+            // Unciv's AutoPlay ("full AI"): the AI plays this civ's turn - research, policies, production, units,
+            // diplomacy, religion - as it plays its own civs. For playtests of whole games with nobody at the controls
+            // (bridge/autoplay_test.py); end the turn with endTurn as usual.
+            "autoPlay" -> {
+                com.unciv.logic.automation.civilization.NextTurnAutomation.automateCivMoves(civ)
+                civ.updateStatsForNextTurn()
+                "ok"
+            }
             else -> throw BridgeException("Unknown debug command '$command'")
         }
         return buildJsonObject { put("result", result) }

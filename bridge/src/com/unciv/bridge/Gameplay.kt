@@ -37,7 +37,8 @@ object Gameplay {
             list.add(buildJsonObject { put("type", type); put("text", Lang.t(text)); extra() })
 
         if (alertsToAnswer > 0) add("AnswerAlerts", if (alertsToAnswer == 1) "Answer the message" else "Answer [$alertsToAnswer] messages")
-        if (civ.greatPeople.freeGreatPeople > 0 && civ.greatPeople.getFreeGreatPersonOptions().isNotEmpty())
+        if (civ.greatPeople.freeGreatPeople > 0 && civ.greatPeople.getFreeGreatPersonOptions().isNotEmpty()
+            && greatPersonDeferredOnTurn != game.turns)
             add("PickGreatPerson", "Choose a free great person")
         civView.cities().firstOrNull { !it.isPuppet() && it.currentConstructionName().isEmpty() }?.let { city ->
             add("PickConstruction", "{Pick construction}: {${city.name}}") {
@@ -94,10 +95,20 @@ object Gameplay {
         }
     }
 
+    /** The turn a free great person found no space next to the capital: it waits for a later turn (see below). */
+    private var greatPersonDeferredOnTurn = -1
+
     fun chooseGreatPerson(civ: Civilization, name: String) {
         if (civ.greatPeople.freeGreatPeople <= 0) throw BridgeException("You have no free great person to pick")
         if (civ.greatPeople.getFreeGreatPersonOptions().none { it.name == name }) throw BridgeException("$name isn't available")
-        civ.greatPeople.chooseFreeGreatPerson(name) ?: throw BridgeException("No space to place the $name")
+        if (civ.greatPeople.chooseFreeGreatPerson(name) == null) {
+            // Like Unciv's picker ("No space to place this unit", then it can be closed): the turn may end, and the
+            // free great person is kept for a later turn - otherwise a capital hemmed in by units would block the
+            // game for good
+            greatPersonDeferredOnTurn = civ.gameInfo.turns
+            throw BridgeException(Lang.t("No space to place this unit") + " - " +
+                "move a unit away from your capital and pick again, or end the turn and pick later.")
+        }
     }
 
     /** Who you can vote for as world leader (Unciv's DiplomaticVotePickerScreen). */

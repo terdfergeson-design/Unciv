@@ -1046,8 +1046,17 @@ class GameSession {
         val constructions = cityView.constructions
         if (cityView.isPuppet()) throw BridgeException("${city.name} is a puppet - you can't choose its production")
         if (!constructions.isBuildable(construction)) throw BridgeException("${city.name} can't build $name")
-        if (!constructions.canAddToQueue(construction)) throw BridgeException("$name can't be added (is the queue full?)")
         val now = (params.str("mode") ?: "now") == "now"
+        // "Build now" on a building that's already in the queue: move it to the front instead of queueing it twice
+        val queued = constructions.constructionQueue.indexOf(name)
+        if (now && construction is Building && queued >= 0) {
+            if (queued > 0) cityView.tryMoveEntryToTop(queued)
+            if (constructions.currentConstructionName() == name) cityView.tryReassignPopulation()
+            return StateWriter.cityDetails(cityView)
+        }
+        if (!constructions.canAddToQueue(construction)) throw BridgeException(
+            if (constructions.isQueueFull()) "The queue is full - take something out of it first"
+            else "$name is already in the queue")
         if (construction is Building && construction.hasCreateOneImprovementUnique()) {
             // Unciv's city screen asks for the tile the improvement goes on, then queues the building with it
             val tileView = placeTile(cityView, construction, params)

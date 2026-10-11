@@ -115,7 +115,12 @@ class BridgeServer(private val port: Int, private val session: GameSession, priv
             buildJsonObject {
                 put("id", id)
                 put("ok", false)
-                put("error", ex.message ?: ex.javaClass.simpleName)
+                if (ex is BridgeException) put("error", ex.message ?: "?")
+                else {
+                    // A bug rather than a refusal: say so, and where (tests sort failures by this)
+                    put("error", "${ex.javaClass.simpleName}: ${ex.message ?: ""} at ${ex.stackTrace.firstOrNull { it.className.startsWith("com.unciv") } ?: ""}")
+                    put("internal", true)
+                }
             }
         }
     }
