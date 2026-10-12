@@ -246,7 +246,16 @@ class Game:
                         continue
                     t = rnd.choice(tiles)
                     params.update(x=t["x"], y=t["y"])
-                self.call("unitAction", expect_fail=free_pick, **params)
+                before = {c["name"] for c in self.call("getState", since=self.revision).get("cities", [])} if a["type"] == "FoundCity" else set()
+                done = self.call("unitAction", expect_fail=free_pick, **params)
+                if done and a["type"] == "FoundCity":
+                    # With "Auto-assign city production" off (as here), a new city waits for the player to choose
+                    for c in self.call("getState").get("cities", []):
+                        if c["name"] not in before and c.get("civ", self.player) == self.player:
+                            queue = (self.call("getCity", name=c["name"]) or {}).get("queue", [])
+                            if queue:
+                                self.fail("unitAction", params, f"new city {c['name']} picked its own production "
+                                          f"({queue[0].get('name')}) with auto-assign off")
         cities = [c for c in state.get("cities", []) if c.get("civ", self.player) == self.player and not c.get("isPuppet")]
         if not cities:
             return

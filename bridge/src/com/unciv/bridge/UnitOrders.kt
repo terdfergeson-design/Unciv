@@ -128,9 +128,17 @@ object UnitOrders {
         }.map { it.getLeaderDisplayName() }.toList()
         val confirm = if (promised.isEmpty()) null else Lang.t("Do you want to break your promise to [${promised.joinToString(", ")}]?")
         return Entry(action.type, action.title, true, action.isCurrentAction, confirm = confirm) {
+            val civ = unit.civ
+            val before = civ.cities.toSet()
             withoutPopups(unit) {
                 UnitActions.getUnitActions(unit, UnitActionType.FoundCity).firstOrNull { it.action != null }?.action?.invoke()
             }
+            // Founding runs with the civ treated as an AI (no popups), and Unciv lets an AI's new city pick its own
+            // production. A player's new city only does that with "Auto-assign city production" on; otherwise it
+            // waits for the player to choose, as in Unciv
+            if (civ.isHuman() && !com.unciv.UncivGame.Current.settings.autoAssignCityProduction)
+                for (city in civ.cities.filter { it !in before && !it.isPuppet })
+                    city.cityConstructions.editQueue { clear() }
         }
     }
 
