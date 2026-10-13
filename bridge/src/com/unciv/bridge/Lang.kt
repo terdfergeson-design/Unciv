@@ -74,6 +74,7 @@ object Lang {
         // Keep them disabled in LocaleCode's stock Unciv UI language list.
         val names = (LocaleCode.getSupportedLanguages() + sequenceOf("Arabic", "Hebrew"))
             .distinct()
+            .filter { it != Constants.english } // The source language is added once below at 100%.
             .filter { Gdx.files.internal("jsons/translations/$it.properties").exists() }
             .toList()
         return buildJsonObject {
