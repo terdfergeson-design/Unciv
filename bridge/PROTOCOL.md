@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v24)
+# Unciv bridge protocol (v25)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
@@ -111,7 +111,7 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `getVoteChoices` / `vote` | – / `civ?` (none = abstain) | `canVote`, `civs[{name, nation}]` / `blockers`, `alerts` |
 | `getReligionChoices` | – | `mode` (pantheon / found / enhance / reform / null), `enabled`, `state`, `religion?`, `displayName?`, `currentBeliefs[{name, type}]`, `slots[]` (a belief type per pick), `pickIconAndName`, `icons?[{name, available}]`, `beliefs[{name, type, color, effects, available, why? (taken / yours / blocked)}]` |
 | `chooseReligion` | `beliefs[]` (one per slot, in order), when founding also `icon` and `name` | the updated `getReligionChoices` result |
-| `getVictory` / `oneMoreTurn` | – | Unciv's victory screen: `turn, speed, difficulty, maxTurns?, oneMoreTurnMode, defeated, winner?{civ, victoryType, turn, isYou, text}, defeatText?`, `ourStatus[{name, header, milestones[{status (completed / partial / incomplete), text, steps?[{text, done}]}]}]`, `global[{name, civs[{name, nation, known, isYou, defeated, milestonesDone, next}]}]`, `showRankings, showCharts, showDemographics`, `rankingTypes[]`, `rankings[{type, label, civs[{name, value, ...}]}]`, `history[{name, turns{turn: {type: value}}}]`, `demographics[{type, label, value, rank, best, bestCiv, average, worst, worstCiv}]` |
+| `getVictory` / `oneMoreTurn` | – | Unciv's victory screen: `turn, speed, difficulty, maxTurns?, oneMoreTurnMode, defeated, winner?{civ, victoryType, turn, isYou, text}`, `ourStatus[{name, header, milestones[{status (completed / partial / incomplete), text, steps?[{text, done}]}]}]`, `global[{name, civs[{name, nation, known, isYou, defeated, milestonesDone, next}]}]`, rankings, charts, demographics, and `mapReplay{startTurn, endTurn, tiles[{x, y, states[{turn, owner?, city (N/R/C)}]}]}` (compact ownership and city-center changes) |
 | `diplomacyAction` | `civ`, `action`: giftGold (`gold` 250/500/1000), giftImprovement (`x, y, improvement`), pledgeProtection, revokeProtection, tribute (`kind` gold / worker), marriage, denounce, offerFriendship, makeDemand (`demand`) | `message`, `diplomacy` |
 | `cityAttack` | city, `tileX, tileY` (from `getCity().bombardTargets`) | `attacked`, `defender`, `damageToDefender`, `defenderDefeated`, `defenderHealth`, `city` (updated getCity) |
 | `getEspionage` / `moveSpy` / `stageCoup` | – / `spy`, `city?` (none = hideout), `confirm?` / `spy`, `confirm?` | `enabled`, `spies[{name, rank, action, location, x?, y?, turns?, alive, canCoup?, coupChance?, stagingCoup?}]`, `cities[{name, civ, x, y, isCityState, own, spies[], canMoveHere[], promiseWarning?}]` / `done` (false: `confirm` question), `espionage` |

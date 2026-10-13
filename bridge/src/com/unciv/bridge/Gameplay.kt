@@ -173,6 +173,40 @@ object Gameplay {
         put("difficulty", game.difficulty)
         if ("Time" in params.victoryTypes) put("maxTurns", params.maxTurns)
         put("oneMoreTurnMode", game.oneMoreTurnMode)
+        if (gameOver && game.historyStartTurn >= 0) putJsonObject("mapReplay") {
+            put("startTurn", game.historyStartTurn)
+            put("endTurn", game.turns)
+            putJsonArray("tiles") {
+                for (tile in game.tileMap.values) {
+                    addJsonObject {
+                        put("x", tile.position.x)
+                        put("y", tile.position.y)
+                        put("base", tile.baseTerrain)
+                        putJsonArray("features") { tile.terrainFeatures.forEach { add(it) } }
+                        tile.naturalWonder?.let { put("wonder", it) }
+                        tile.resource?.let { put("resource", it) }
+                        tile.improvement?.let { put("improvement", it) }
+                        put("road", tile.roadStatus.name)
+                        if (tile.hasBottomRiver || tile.hasBottomLeftRiver || tile.hasBottomRightRiver) {
+                            putJsonObject("river") {
+                                put("bottom", tile.hasBottomRiver)
+                                put("bottomLeft", tile.hasBottomLeftRiver)
+                                put("bottomRight", tile.hasBottomRightRiver)
+                            }
+                        }
+                        putJsonArray("states") {
+                            for ((turn, state) in tile.history) addJsonObject {
+                                put("turn", turn)
+                                state.owningCivName?.let { id ->
+                                    put("owner", game.civilizations.firstOrNull { it.civID == id }?.civName ?: id)
+                                }
+                                put("city", state.cityCenterType.serializedRepresentation)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         put("defeated", viewer.isDefeated())
         game.victoryData?.let { data ->
             val winner = game.civilizations.firstOrNull { it.civID == data.winningCiv }
