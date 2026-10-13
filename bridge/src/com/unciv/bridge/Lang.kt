@@ -70,7 +70,10 @@ object Lang {
     /** getLanguages: every language Unciv has a translation file for, with how complete it is, and the current one. */
     fun languages(): JsonObject {
         val percentages = game.translations.percentCompleteOfLanguages
-        val names = LocaleCode.getSupportedLanguages()
+        // These catalogs use logical Unicode and require an RTL-capable frontend (Godot).
+        // Keep them disabled in LocaleCode's stock Unciv UI language list.
+        val names = (LocaleCode.getSupportedLanguages() + sequenceOf("Arabic", "Hebrew"))
+            .distinct()
             .filter { Gdx.files.internal("jsons/translations/$it.properties").exists() }
             .toList()
         return buildJsonObject {
@@ -79,7 +82,11 @@ object Lang {
                 addJsonObject { put("name", Constants.english); put("label", "English"); put("tag", "en"); put("percent", 100) }
                 for (name in names.sortedBy { it.replace('_', ' ') }) addJsonObject {
                     put("name", name)
-                    put("label", name.replace('_', ' '))
+                    put("label", when (name) {
+                        "Arabic" -> "Arabic / العربية"
+                        "Hebrew" -> "Hebrew / עברית"
+                        else -> name.replace('_', ' ')
+                    })
                     put("tag", tag(name))
                     put("percent", percentages[name] ?: 0)
                 }

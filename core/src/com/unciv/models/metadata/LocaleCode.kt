@@ -48,6 +48,7 @@ enum class LocaleCode(
     Galician("gl-ES"),
     German("de-DE"),
     Greek("el-GR"),
+    Hebrew("he-IL", unused = true), // The bridge supports RTL; the stock UI does not yet.
     Hindi("hi-IN"),
     Hungarian("hu-HU"),
     Indonesian("in-ID"),
