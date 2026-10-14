@@ -1,9 +1,0 @@
-com.unciv.bridge.android.bridge-android-pngs-0 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\build\generated\res\pngs\release
-com.unciv.bridge.android.bridge-android-updated_navigation_xml-1 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\build\generated\updated_navigation_xml\release
-com.unciv.bridge.android.bridge-android-mergeReleaseResources-2 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\build\intermediates\incremental\release\mergeReleaseResources\merged.dir
-com.unciv.bridge.android.bridge-android-mergeReleaseResources-3 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\build\intermediates\incremental\release\mergeReleaseResources\stripped.dir
-com.unciv.bridge.android.bridge-android-release-4 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\build\intermediates\merged_res\release\mergeReleaseResources
-com.unciv.bridge.android.bridge-android-release-5 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\build\intermediates\packaged_res\release\packageReleaseResources
-com.unciv.bridge.android.bridge-android-main-6 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\src\main\res
-com.unciv.bridge.android.bridge-android-release-7 C:\Users\joebe\Documents\uncivvr\unciv\bridge-android\src\release\res
-gradleHome-0 C:\Users\joebe\.gradle
