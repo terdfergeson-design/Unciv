@@ -85,6 +85,7 @@ object StateWriter {
                 put("cultureForNextPolicy", viewer.policies.getCultureNeededForNextPolicy())
                 put("faithPoints", viewer.religionManager.storedFaith)
                 put("population", viewer.cities.sumOf { it.population.population })
+                put("atWar", viewer.isAtWar())   // v26: Unciv's music picks a War or Peace track by it
             }
 
             putJsonArray("civs") {

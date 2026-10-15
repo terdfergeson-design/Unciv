@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v25)
+# Unciv bridge protocol (v26)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
@@ -75,6 +75,9 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v26** | | |
+| `downloadMusic` | – | `path`, `bytes`: Unciv's own music track (Options > Sound > Download music: "Thatched Villagers", from Unciv's Dropbox) saved as `~/.unciv-vr/Music/Thatched Villagers - Ambient.mp3`, where the client looks for music. Fails with "Could not download music!" and the reason |
+| `getState` | | `player` also has `atWar` (at war with any civ still in the game) - Unciv's turn music picks a War or Peace track by it |
 | **v24** | | |
 | `debug` | also `command: autoPlay`: Unciv's AI plays your civ's turn (research, policies, production, units, diplomacy, religion); end it with `endTurn` - for `autoplay_test.py` | |
 | (errors) | | a failure that is a bug in the bridge, rather than a refusal, also carries `internal: true`, and its `error` names the exception and where it happened |

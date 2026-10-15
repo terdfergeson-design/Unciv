@@ -270,6 +270,8 @@ class GameSession {
         "setSettings" -> setSettings(params)
         // v24: languages
         "getLanguages" -> Lang.languages()
+        // v26: Unciv's default music track (Options > Sound > Download music)
+        "downloadMusic" -> Music.downloadDefault()
         "getTranslations" -> Lang.dictionary()
         "endTurn" -> endTurn()
         // v22: the Civilopedia and the tutorials
