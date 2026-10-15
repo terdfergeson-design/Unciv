@@ -1,16 +1,15 @@
 package com.unciv.bridge
 
 import com.unciv.logic.automation.unit.UnitAutomation
-import com.unciv.logic.civilization.PlayerType
-import com.unciv.logic.civilization.diplomacy.DiplomacyFlags
 import com.unciv.logic.map.HexCoord
 import com.unciv.logic.map.MapPathing
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
 import com.unciv.models.UnitAction
 import com.unciv.models.UnitActionType
-import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
-import com.unciv.ui.screens.worldscreen.unit.actions.UnitActionsUpgrade
+import com.unciv.logic.map.mapunit.actions.UnitActions
+import com.unciv.logic.map.mapunit.actions.UnitActionsUpgrade
+import com.unciv.ui.screens.worldscreen.unit.actions.UiUnitActionType
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -29,7 +28,8 @@ import kotlinx.serialization.json.putJsonObject
 object UnitOrders {
 
     class Entry(
-        val type: UnitActionType,
+        /** The UI type: Unciv's logic types plus the UI-only ones (swap, connect road, promote, disband...) */
+        val type: UiUnitActionType,
         val title: String,
         val enabled: Boolean,
         val current: Boolean,
@@ -54,20 +54,8 @@ object UnitOrders {
         UnitActionType.TriggerUnique, UnitActionType.AddInCapital, UnitActionType.GiftUnit,
     )
 
-    /** Runs [block] with the unit's civ treated as an AI, which makes Unciv skip its confirmation popups. */
-    private fun <T> withoutPopups(unit: MapUnit, block: () -> T): T {
-        val civ = unit.civ
-        val type = civ.playerType
-        civ.playerType = PlayerType.AI
-        try {
-            return block()
-        } finally {
-            civ.playerType = type
-        }
-    }
-
     private fun fromUnciv(action: UnitAction, run: ((Tile?) -> Unit)? = action.action?.let { invoke -> { _: Tile? -> invoke() } }) =
-        Entry(action.type, action.title, action.action != null, action.isCurrentAction, run = run)
+        Entry(UiUnitActionType.of(action.type), action.title, action.action != null, action.isCurrentAction, run = run)
 
     fun list(unit: MapUnit): List<Entry> {
         val tile = unit.getTile()
@@ -79,7 +67,7 @@ object UnitOrders {
         for (type in mappedTypes) tryAdd(type.name) {
             for (action in UnitActions.getUnitActions(unit, type)) {
                 when (type) {
-                    UnitActionType.FoundCity -> result.add(foundCity(unit, tile, action))
+                    UnitActionType.FoundCity -> result.add(foundCity(unit, action))
                     else -> result.add(fromUnciv(action))
                 }
             }
@@ -87,30 +75,30 @@ object UnitOrders {
         tryAdd("ConnectRoad") { connectRoad(unit)?.let { result.add(it) } }
 
         // Unciv's "unmapped" actions, rebuilt in the same order
-        if (!unit.isAutomated()) result.add(Entry(UnitActionType.Automate, UnitActionType.Automate.value, unit.hasMovement(), false) {
+        if (!unit.isAutomated()) result.add(Entry(UiUnitActionType.Automate, UiUnitActionType.Automate.value, unit.hasMovement(), false) {
             unit.automated = true
             UnitAutomation.automateUnitMoves(unit)
         })
-        if (unit.isMoving()) result.add(Entry(UnitActionType.StopMovement, UnitActionType.StopMovement.value, true, false) { unit.action = null })
-        if (unit.isExploring()) result.add(Entry(UnitActionType.StopExploration, UnitActionType.StopExploration.value, true, false) { unit.action = null })
-        if (unit.isAutomated()) result.add(Entry(UnitActionType.StopAutomation, UnitActionType.StopAutomation.value, true, false) {
+        if (unit.isMoving()) result.add(Entry(UiUnitActionType.StopMovement, UiUnitActionType.StopMovement.value, true, false) { unit.action = null })
+        if (unit.isExploring()) result.add(Entry(UiUnitActionType.StopExploration, UiUnitActionType.StopExploration.value, true, false) { unit.action = null })
+        if (unit.isAutomated()) result.add(Entry(UiUnitActionType.StopAutomation, UiUnitActionType.StopAutomation.value, true, false) {
             unit.action = null
             unit.automated = false
         })
         if (unit.promotions.canBePromoted())   // the client opens its promotion card for this one
-            result.add(Entry(UnitActionType.Promote, UnitActionType.Promote.value, unit.hasMovement() && unit.attacksThisTurn == 0, false))
+            result.add(Entry(UiUnitActionType.Promote, UiUnitActionType.Promote.value, unit.hasMovement() && unit.attacksThisTurn == 0, false))
         tryAdd("Upgrade") { for (action in UnitActionsUpgrade.getUpgradeActions(unit)) result.add(fromUnciv(action)) }
         tryAdd("Pillage") { pillage(unit)?.let { result.add(it) } }
         addSleep(unit, tile, result)
         addFortify(unit, result)
         if (!unit.baseUnit.isAirUnit() && !unit.isExploring())
-            result.add(Entry(UnitActionType.Explore, UnitActionType.Explore.value, true, false) {
+            result.add(Entry(UiUnitActionType.Explore, UiUnitActionType.Explore.value, true, false) {
                 unit.action = UnitActionType.Explore.value
                 if (unit.hasMovement()) UnitAutomation.automatedExplore(unit)
             })
-        result.add(Entry(UnitActionType.Skip, UnitActionType.Skip.value, unit.hasMovement(), !unit.due) { unit.due = !unit.due })
+        result.add(Entry(UiUnitActionType.Skip, UiUnitActionType.Skip.value, unit.hasMovement(), !unit.due) { unit.due = !unit.due })
         if (unit.isMoving()) tryAdd("ShowUnitDestination") {
-            result.add(Entry(UnitActionType.ShowUnitDestination, UnitActionType.ShowUnitDestination.value, true, false,
+            result.add(Entry(UiUnitActionType.ShowUnitDestination, UiUnitActionType.ShowUnitDestination.value, true, false,
                 destination = unit.getMovementDestination()))
         }
         tryAdd("Escort") { escort(unit)?.let { result.add(it) } }
@@ -119,49 +107,35 @@ object UnitOrders {
         return result
     }
 
-    private fun foundCity(unit: MapUnit, tile: Tile, action: UnitAction): Entry {
+    private fun foundCity(unit: MapUnit, action: UnitAction): Entry {
         if (action.action == null) return fromUnciv(action)
-        // Unciv asks first when the city would break a promise not to settle near someone
-        val promised = unit.civ.getKnownCivs().filter { it.isMajorCiv() && !unit.civ.isAtWarWith(it) }.filter { other ->
-            other.getDiplomacyManager(unit.civ)?.hasFlag(DiplomacyFlags.AgreedToNotSettleNearUs) == true
-                && other.cities.any { it.getCenterTile().aerialDistanceTo(tile) <= 6 && other.hasExplored(it.getCenterTile()) }
-        }.map { it.getLeaderDisplayName() }.toList()
-        val confirm = if (promised.isEmpty()) null else Lang.t("Do you want to break your promise to [${promised.joinToString(", ")}]?")
-        return Entry(action.type, action.title, true, action.isCurrentAction, confirm = confirm) {
-            val civ = unit.civ
-            val before = civ.cities.toSet()
-            withoutPopups(unit) {
-                UnitActions.getUnitActions(unit, UnitActionType.FoundCity).firstOrNull { it.action != null }?.action?.invoke()
-            }
-            // Founding runs with the civ treated as an AI (no popups), and Unciv lets an AI's new city pick its own
-            // production. A player's new city only does that with "Auto-assign city production" on; otherwise it
-            // waits for the player to choose, as in Unciv
-            if (civ.isHuman() && !com.unciv.UncivGame.Current.settings.autoAssignCityProduction)
-                for (city in civ.cities.filter { it !in before && !it.isPuppet })
-                    city.cityConstructions.editQueue { clear() }
+        // Unciv asks first when the city would break a promise not to settle near someone; calling the action directly
+        // skips its popup, so the question goes to the client instead
+        return Entry(UiUnitActionType.FoundCity, action.title, true, action.isCurrentAction,
+            confirm = action.confirmation?.let { Lang.t(it.question) }) {
+            UnitActions.getUnitActions(unit, UnitActionType.FoundCity).firstOrNull { it.action != null }?.action?.invoke()
         }
     }
 
     private fun pillage(unit: MapUnit): Entry? {
         // Unciv's own test (UnitActionsPillage.getPillageAction); without it the search below would run on into the
-        // actions that need the world screen
+        // escort action, which needs the world screen
         if (unit.isCivilian() || unit.currentTile.getImprovementToPillageName() == null || unit.currentTile.getOwner() == unit.civ) return null
-        val raw = withoutPopups(unit) { UnitActions.getUnitActions(unit, UnitActionType.Pillage).firstOrNull() } ?: return null
-        val improvement = unit.currentTile.getImprovementToPillageName()
-        return Entry(UnitActionType.Pillage, raw.title, raw.action != null, raw.isCurrentAction,
-            confirm = improvement?.let { Lang.t("Are you sure you want to pillage this [$it]?") }) {
-            withoutPopups(unit) { UnitActions.getUnitActions(unit, UnitActionType.Pillage).firstOrNull { it.action != null }?.action?.invoke() }
+        val raw = UnitActions.getUnitActions(unit, UnitActionType.Pillage).firstOrNull() ?: return null
+        return Entry(UiUnitActionType.Pillage, raw.title, raw.action != null, raw.isCurrentAction,
+            confirm = raw.confirmation?.let { Lang.t(it.question) }) {
+            UnitActions.getUnitActions(unit, UnitActionType.Pillage).firstOrNull { it.action != null }?.action?.invoke()
         }
     }
 
     private fun addSleep(unit: MapUnit, tile: Tile, result: MutableList<Entry>) {
         if (unit.isFortified() || unit.canFortify() || unit.isGuarding() || !unit.hasMovement()) return
         if (tile.hasImprovementInProgress() && unit.canBuildImprovement(tile.getTileImprovementInProgress()!!)) return
-        result.add(Entry(UnitActionType.Sleep, UnitActionType.Sleep.value, !unit.isSleeping() || unit.isSleepingUntilHealed(), unit.isSleeping() && !unit.isActionUntilHealed()) {
+        result.add(Entry(UiUnitActionType.Sleep, UiUnitActionType.Sleep.value, !unit.isSleeping() || unit.isSleepingUntilHealed(), unit.isSleeping() && !unit.isActionUntilHealed()) {
             unit.action = UnitActionType.Sleep.value
         })
         if (unit.health == 100) return
-        result.add(Entry(UnitActionType.SleepUntilHealed, UnitActionType.SleepUntilHealed.value,
+        result.add(Entry(UiUnitActionType.SleepUntilHealed, UiUnitActionType.SleepUntilHealed.value,
             !unit.isSleepingUntilHealed() && unit.canHealInCurrentTile(), unit.isSleepingUntilHealed()) {
             unit.action = UnitActionType.SleepUntilHealed.value
         })
@@ -169,14 +143,14 @@ object UnitOrders {
 
     private fun addFortify(unit: MapUnit, result: MutableList<Entry>) {
         if (unit.isFortified()) {
-            val type = if (unit.isActionUntilHealed()) UnitActionType.FortifyUntilHealed else UnitActionType.Fortify
+            val type = if (unit.isActionUntilHealed()) UiUnitActionType.FortifyUntilHealed else UiUnitActionType.Fortify
             result.add(Entry(type, "{Fortification} ${unit.getFortificationTurns() * 20}%", false, true))
             return
         }
         if (!unit.canFortify() || !unit.hasMovement()) return
-        result.add(Entry(UnitActionType.Fortify, UnitActionType.Fortify.value, true, false) { unit.fortify() })
+        result.add(Entry(UiUnitActionType.Fortify, UiUnitActionType.Fortify.value, true, false) { unit.fortify() })
         if (unit.health == 100) return
-        result.add(Entry(UnitActionType.FortifyUntilHealed, UnitActionType.FortifyUntilHealed.value, unit.canHealInCurrentTile(), false) {
+        result.add(Entry(UiUnitActionType.FortifyUntilHealed, UiUnitActionType.FortifyUntilHealed.value, unit.canHealInCurrentTile(), false) {
             unit.fortifyUntilHealed()
         })
     }
@@ -184,15 +158,15 @@ object UnitOrders {
     private fun escort(unit: MapUnit): Entry? {
         if (unit.baseUnit.isAirUnit()) return null
         if (unit.getOtherEscortUnit() == null) return null
-        return if (!unit.isEscorting()) Entry(UnitActionType.EscortFormation, UnitActionType.EscortFormation.value, true, false) { unit.startEscorting() }
-        else Entry(UnitActionType.StopEscortFormation, UnitActionType.StopEscortFormation.value, true, false) { unit.stopEscorting() }
+        return if (!unit.isEscorting()) Entry(UiUnitActionType.EscortFormation, UiUnitActionType.EscortFormation.value, true, false) { unit.startEscorting() }
+        else Entry(UiUnitActionType.StopEscortFormation, UiUnitActionType.StopEscortFormation.value, true, false) { unit.stopEscorting() }
     }
 
     private fun swap(unit: MapUnit): Entry? {
         if (unit.baseUnit.isAirUnit()) return null
         val tiles = unit.movement.getUnitSwappableTiles().toList()
         if (tiles.isEmpty()) return null
-        return Entry(UnitActionType.SwapUnits, UnitActionType.SwapUnits.value, true, false, targets = tiles) { target ->
+        return Entry(UiUnitActionType.SwapUnits, UiUnitActionType.SwapUnits.value, true, false, targets = tiles) { target ->
             if (target == null || !unit.movement.canUnitSwapTo(target)) throw BridgeException("${Gameplay.plain(unit.displayName())} can't swap places with anything there")
             unit.movement.swapMoveToTile(target, true)
             if (unit.isExploring() || unit.isMoving()) unit.action = null
@@ -205,7 +179,7 @@ object UnitOrders {
         val civ = unit.civ
         // Only once the civ can build roads somewhere (The Wheel in Civ V)
         val roadsKnown = civ.gameInfo.ruleset.roadImprovement?.let { road -> road.techRequired == null || civ.tech.isResearched(road.techRequired!!) } == true
-        return Entry(UnitActionType.ConnectRoad, UnitActionType.ConnectRoad.value, roadsKnown && unit.hasMovement(),
+        return Entry(UiUnitActionType.ConnectRoad, UiUnitActionType.ConnectRoad.value, roadsKnown && unit.hasMovement(),
             unit.isAutomatingRoadConnection(), anyTile = true) { target ->
             if (target == null) throw BridgeException("Pick where the road should go")
             if (!target.isLand || target.isImpassible() || !civ.hasExplored(target) || !MapPathing.isValidRoadPathTile(civ, target))
@@ -213,7 +187,7 @@ object UnitOrders {
             if (unit.movement.getRoadPath(target) == null) throw BridgeException("${Gameplay.plain(unit.displayName())} can't build a road to there")
             unit.automatedRoadConnectionDestination = target.position
             unit.automatedRoadConnectionPath = null
-            unit.action = UnitActionType.ConnectRoad.value
+            unit.action = com.unciv.Constants.connectRoadAction
             unit.automated = true
             UnitAutomation.automateUnitMoves(unit)
         }
@@ -222,7 +196,7 @@ object UnitOrders {
     private fun disband(unit: MapUnit): Entry {
         val text = if (unit.currentTile.getOwner() == unit.civ) Lang.t("Disband this unit for [${unit.baseUnit.getDisbandGold(unit.civ)}] gold?")
             else Lang.t("Do you really want to disband this unit?")
-        return Entry(UnitActionType.DisbandUnit, UnitActionType.DisbandUnit.value, unit.hasMovement(), false, confirm = text) {
+        return Entry(UiUnitActionType.DisbandUnit, UiUnitActionType.DisbandUnit.value, unit.hasMovement(), false, confirm = text) {
             unit.disband()
             unit.civ.updateStatsForNextTurn()   // less upkeep
         }

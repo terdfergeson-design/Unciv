@@ -35,7 +35,8 @@ import com.unciv.models.ruleset.PerpetualConstruction
 import com.unciv.models.ruleset.RulesetCache
 import com.unciv.models.ruleset.tile.TileImprovement
 import com.unciv.models.stats.Stat
-import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
+import com.unciv.logic.map.mapunit.actions.UnitActions
+import com.unciv.ui.screens.worldscreen.unit.actions.UiUnitActionType
 import com.unciv.view.AttackableTileView
 import com.unciv.view.GameView
 import com.unciv.view.MapUnitView
@@ -938,7 +939,7 @@ class GameSession {
         requireTurn()
         val unit = findOwnUnit(params)
         val typeName = params.requireStr("action")
-        if (UnitActionType.entries.none { it.name == typeName }) throw BridgeException("Unknown unit action '$typeName'")
+        if (UiUnitActionType.entries.none { it.name == typeName }) throw BridgeException("Unknown unit action '$typeName'")
         val x = params.int("x")
         val y = params.int("y")
         val target = if (x != null && y != null) HexCoord(x, y) else null
