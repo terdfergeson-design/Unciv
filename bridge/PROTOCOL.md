@@ -76,7 +76,7 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
 | **v26** | | |
-| `downloadMusic` | – | `path`, `bytes`: Unciv's own music track (Options > Sound > Download music: "Thatched Villagers", from Unciv's Dropbox) saved as `~/.unciv-vr/Music/Thatched Villagers - Ambient.mp3`, where the client looks for music. Fails with "Could not download music!" and the reason |
+| `downloadMusic` | – | `path`, `bytes`: Unciv's own music track (Options > Sound > Download music: "Thatched Villagers" by Kevin MacLeod, CC BY 4.0 - fetched from incompetech.com, its author's site, rather than Unciv's Dropbox) saved as `~/.unciv-vr/Music/Thatched Villagers - Ambient.mp3`, where the client looks for music. Fails with "Could not download music!" and the reason |
 | `getState` | | `player` also has `atWar` (at war with any civ still in the game) - Unciv's turn music picks a War or Peace track by it |
 | **v24** | | |
 | `debug` | also `command: autoPlay`: Unciv's AI plays your civ's turn (research, policies, production, units, diplomacy, religion); end it with `endTurn` - for `autoplay_test.py` | |
