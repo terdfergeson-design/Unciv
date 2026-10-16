@@ -457,6 +457,7 @@ def main():
     parser.add_argument("--map-size", default="Tiny", help="Tiny, Small, Medium, Large, Huge (or 'mix')")
     parser.add_argument("--ruleset", default="", help="'Civ V - Vanilla', 'Civ V - Gods & Kings', or 'mix'")
     parser.add_argument("--civ", default="Random")
+    parser.add_argument("--world-wrap", default="off", choices=["off", "on", "mix"], help="world-wrap maps (mix: every other game)")
     parser.add_argument("--ai-players", type=int, default=3)
     parser.add_argument("--city-states", type=int, default=4)
     parser.add_argument("--max-turns", type=int, default=500)
@@ -496,6 +497,8 @@ def main():
         setup = {"seed": seed + i - 1, "aiPlayers": args.ai_players, "cityStates": args.city_states,
                  "mapSize": sizes[(i - 1) % len(sizes)] if args.map_size == "mix" else args.map_size,
                  "civ": args.civ}
+        if args.world_wrap == "on" or (args.world_wrap == "mix" and i % 2 == 0):
+            setup["worldWrap"] = True
         if args.ruleset == "mix":
             setup["ruleset"] = rulesets[(i - 1) % len(rulesets)]
         elif args.ruleset:

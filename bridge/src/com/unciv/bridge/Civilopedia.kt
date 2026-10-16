@@ -99,6 +99,59 @@ object Civilopedia {
 
     private fun colour(color: com.badlogic.gdx.graphics.Color) = "#" + color.toString().take(6)
 
+    /**
+     * Unciv's Civilopedia search (CivilopediaSearchPopup): every entry whose page has a line containing all the
+     * words of [query] (any order, any case), or matching it as a regular expression when it has `.*`, `\` or `|`
+     * in it - searched in the language Unciv shows, icons left out. Entries whose name matches come first.
+     */
+    fun search(game: GameInfo?, query: String, limit: Int = 200): JsonObject {
+        val ruleset = ruleset(game)
+        val religion = religionEnabled(game, ruleset)
+        val trimmed = query.trim()
+        val regex: Regex? = if (".*" in trimmed || '\\' in trimmed || '|' in trimmed)
+            try { Regex(trimmed, RegexOption.IGNORE_CASE) } catch (_: Exception) { throw BridgeException("Invalid regular expression") }
+            else null
+        val words = trimmed.split(' ').filter { it.isNotEmpty() }.toSet()
+        fun check(line: String): Boolean =
+            if (regex != null) regex.containsMatchIn(line) else words.all { line.contains(it, ignoreCase = true) }
+        val byName = ArrayList<JsonObject>()
+        val byText = ArrayList<JsonObject>()
+        var total = 0
+        if (trimmed.isNotEmpty()) for (category in CivilopediaCategories.entries) {
+            if (!religion && category == CivilopediaCategories.Belief) continue
+            for (item in items(category, game, ruleset)) {
+                val label = text(name(item), hideIcons = true)
+                val nameMatches = check(label) || check(name(item))
+                val textMatches = nameMatches || try {
+                    sequence {
+                        item.getCivilopediaTextHeader()?.let { yield(it) }
+                        yieldAll(item.civilopediaText)
+                        yieldAll(item.getCivilopediaTextLines(ruleset))
+                    }.any { line -> line.text.isNotEmpty() && check(text(line.text, hideIcons = true)) }
+                } catch (ex: Exception) {
+                    System.err.println("Civilopedia search: couldn't read ${category.name}/${name(item)}: $ex")
+                    false
+                }
+                if (!textMatches) continue
+                total++
+                val result = buildJsonObject {
+                    put("link", "${category.name}/${name(item)}")
+                    put("category", category.name)
+                    put("categoryLabel", text(category.label, hideIcons = true))
+                    put("name", name(item))
+                    put("label", label)
+                    put("inName", nameMatches)
+                }
+                (if (nameMatches) byName else byText).add(result)
+            }
+        }
+        return buildJsonObject {
+            put("query", trimmed)
+            put("total", total)
+            putJsonArray("results") { for (r in (byName + byText).take(limit)) add(r) }
+        }
+    }
+
     /** params: link - "Category/Name" (a category's name or label, as Unciv's links have it). */
     fun entry(game: GameInfo?, link: String): JsonObject {
         val ruleset = ruleset(game)

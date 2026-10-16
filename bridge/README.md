@@ -33,7 +33,7 @@ reproduced. Start the bridge with debug commands on, then:
 
 ```
 gradlew :bridge:run --args="--debug --port 8799"
-python bridge/autoplay_test.py --port 8799 --games 6 --map-size mix --ruleset mix --language mix
+python bridge/autoplay_test.py --port 8799 --games 6 --map-size mix --ruleset mix --language mix --world-wrap mix
 ```
 
 Other options: `--max-turns`, `--seed`, `--civ`, `--ai-players`, `--city-states`, `--tutorials`, `--no-actions`

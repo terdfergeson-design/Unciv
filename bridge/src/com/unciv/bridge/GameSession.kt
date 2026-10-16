@@ -84,6 +84,7 @@ class GameSession {
             "mapResources" to JsonPrimitive(MapResourceSetting.default.label),
             "noRuins" to JsonPrimitive(false),
             "noNaturalWonders" to JsonPrimitive(false),
+            "worldWrap" to JsonPrimitive(false),
             "noBarbarians" to JsonPrimitive(false),
             "ragingBarbarians" to JsonPrimitive(false),
             "oneCityChallenge" to JsonPrimitive(false),
@@ -278,6 +279,7 @@ class GameSession {
         // v22: the Civilopedia and the tutorials
         "getCivilopedia" -> Civilopedia.categories(gameInfo)
         "getCivilopediaEntry" -> Civilopedia.entry(gameInfo, params.requireStr("link"))
+        "searchCivilopedia" -> Civilopedia.search(gameInfo, params.requireStr("text"))
         "showTutorial" -> { Tutorials.show(params.requireStr("name")); turnStatus() }
         "tutorialTaskDone" -> { Tutorials.done(params.requireStr("task")); turnStatus() }
         "chooseTutorialTask" -> {
@@ -419,13 +421,23 @@ class GameSession {
             null
         }
         put("isLastSetup", saved != null)
-        put("setup", JsonObject(DEFAULT_SETUP + (saved ?: emptyMap())))
+        // A remembered ruleset this bridge can't load (a mod, or another build's setup - the file is shared by every
+        // checkout that uses ~/.unciv-vr) would leave the new-game setup with no nations or options: start from the
+        // default rules instead, with a Random civ
+        var kept = saved ?: emptyMap()
+        val savedRuleset = (kept["ruleset"] as? JsonPrimitive)?.contentOrNull
+        if (savedRuleset != null && (savedRuleset !in BaseRuleset.entries.map { it.fullName } || RulesetCache[savedRuleset] == null)) {
+            System.err.println("Remembered setup: ruleset '$savedRuleset' isn't available here - using the default rules")
+            kept = kept - "ruleset" - "civ" - "victoryTypes"
+            put("droppedRuleset", savedRuleset)
+        }
+        put("setup", JsonObject(DEFAULT_SETUP + kept))
     }
 
     /**
      * Starts a new game. params, all optional (see getSetup for the defaults and listOptions for allowed values):
      * civ ("Random" or a nation), ruleset, difficulty, speed, startingEra, aiPlayers, cityStates, victoryTypes[],
-     * mapSize, mapShape, mapType, mapResources, noRuins, noNaturalWonders, noBarbarians, ragingBarbarians,
+     * mapSize, mapShape, mapType, mapResources, noRuins, noNaturalWonders, worldWrap, noBarbarians, ragingBarbarians,
      * oneCityChallenge, noCityRazing, nuclearWeapons, espionage, seed.
      * The choices are remembered for getSetup ("Quick start").
      */
@@ -483,7 +495,7 @@ class GameSession {
             this.mapResources = mapResources
             noRuins = p.bool("noRuins") ?: false
             noNaturalWonders = p.bool("noNaturalWonders") ?: false
-            worldWrap = false // the table doesn't draw wrapped maps yet
+            worldWrap = p.bool("worldWrap") ?: false
             p.long("seed")?.let { seed = it }
         }
 

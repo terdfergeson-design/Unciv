@@ -1,4 +1,4 @@
-# Unciv bridge protocol (v26)
+# Unciv bridge protocol (v28)
 
 TCP on `127.0.0.1:8765` (change with `--port`). Each message is one line of UTF-8 JSON.
 Other options: `--exit-when-idle <seconds>` (quit once no client has been connected that long; the Godot client
@@ -27,7 +27,7 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `ping` | – | `protocol`, `uncivVersion`, `gameRunning` |
 | `listOptions` | `ruleset?` | allowed values for every newGame option: `rulesets`, `nations[{name, leader, outerColor, innerColor, uniqueName, uniqueText}]`, `cityStatesAvailable`, `difficulties`, `speeds`, `eras`, `victoryTypes`, `mapSizes`, `mapShapes`, `mapTypes`, `mapResources` |
 | `getSetup` | – | `setup` (the options the last newGame used, or the defaults - what "Quick start" plays), `isLastSetup` |
-| `newGame` | all optional (defaults from `getSetup`): `civ` ("Random" or a nation), `ruleset`, `difficulty`, `speed`, `startingEra`, `aiPlayers`, `cityStates`, `victoryTypes[]`, `mapSize` (Tiny…Huge), `mapShape`, `mapType`, `mapResources`, `noRuins`, `noNaturalWonders`, `noBarbarians`, `ragingBarbarians`, `oneCityChallenge`, `noCityRazing`, `nuclearWeapons`, `espionage`, `seed`. Remembered for `getSetup` unless `remember: false` (test games: also no autosave). World wrap is always off for now | summary: `gameId`, `ruleset`, `turn`, `playerCiv`, `tileCount`, `mapRadius` |
+| `newGame` | all optional (defaults from `getSetup`): `civ` ("Random" or a nation), `ruleset`, `difficulty`, `speed`, `startingEra`, `aiPlayers`, `cityStates`, `victoryTypes[]`, `mapSize` (Tiny…Huge), `mapShape`, `mapType`, `mapResources`, `noRuins`, `noNaturalWonders`, `worldWrap` (v27), `noBarbarians`, `ragingBarbarians`, `oneCityChallenge`, `noCityRazing`, `nuclearWeapons`, `espionage`, `seed`. Remembered for `getSetup` unless `remember: false` (test games: also no autosave). | summary: `gameId`, `ruleset`, `turn`, `playerCiv`, `tileCount`, `mapRadius` |
 | `loadGame` | `name` (from `listSaves`) or `path` – any Unciv save file; `remember: false` (tests) keeps it from autosaving over the player's autosave | summary |
 | `listSaves` | – | `folder`, `saves[{name, modified (ms since 1970), autosave}]` newest first. The bridge keeps its saves in `~/.unciv-vr/SaveFiles` and writes `Autosave` there after every `endTurn` |
 | `saveGame` | `name` (into the bridge's save folder) or `path` | `path` – a normal Unciv save the desktop game can open |
@@ -75,6 +75,11 @@ centres are √3 apart; `+wy` is north. In Godot, map `(wx, wy)` → `Vector3(wx
 | `proposeTrade` | same as evaluateTrade | `accepted`, `counteroffer`, `message`, `diplomacy` (+ `counterKey`, `theyGive[]`, `youGive[]` with a counteroffer). Their AI answers right away the way it answers on its turn in Unciv: yes, no, or a counteroffer - which then waits as one of their trade requests in `getState().alerts` |
 | `promote` | `unitId, promotion` (from `getUnit().promotionChoices`) | the updated `getUnit` result |
 | `setSettings` | optional booleans: `automatedUnitsMoveOnTurnStart`, `checkForDueUnits` (End turn waits until every unit has orders), and Unciv's options its game logic reads: `autoUnitCycle`, `alternateUnitCycleOrder`, `autoAssignCityProduction`, `autoBuildingRoads`, `automatedWorkersReplaceImprovements`, `stopAutomatedWorkersRemoveVegetation`, `automatedUnitsCanUpgrade`, `automatedUnitsChoosePromotions`, `citiesAutoBombardAtEndOfTurn`, `autoAssignSpecialistsInNewCities` | all of them, current values |
+| **v28** | | |
+| `searchCivilopedia` | `text` | Unciv's Civilopedia search: every entry with a page line containing all the words of `text` (any order and case; a regular expression when it has `.*`, `\\` or `\|`), in the language Unciv shows: `query`, `total`, `results[{link, category, categoryLabel, name, label, inName}]` (name matches first, at most 200). Fails with "Invalid regular expression" |
+| **v27** | | |
+| `newGame` | `worldWrap` (default false) - Unciv's World Wrap: the map wraps east-west | |
+| `getState` | | `worldWrap`; with it on, `wrapRadius` (the tile at x + wrapRadius, y - wrapRadius is the same tile as x, y) and `wrapWidth` (= 3 * wrapRadius: how far apart along wx the map's copies lie) |
 | **v26** | | |
 | `downloadMusic` | – | `path`, `bytes`: Unciv's own music track (Options > Sound > Download music: "Thatched Villagers" by Kevin MacLeod, CC BY 4.0 - fetched from incompetech.com, its author's site, rather than Unciv's Dropbox) saved as `~/.unciv-vr/Music/Thatched Villagers - Ambient.mp3`, where the client looks for music. Fails with "Could not download music!" and the reason |
 | `getState` | | `player` also has `atWar` (at war with any civ still in the game) - Unciv's turn music picks a War or Peace track by it |

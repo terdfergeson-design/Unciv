@@ -62,6 +62,16 @@ object StateWriter {
             put("year", game.getYear())
             put("currentPlayer", game.currentPlayer)
             put("playerCiv", viewer.civName)
+            // World wrap (v27): the tile at (x + wrapRadius, y - wrapRadius) is the same as (x, y) - Unciv's
+            // TileMap.getIfTileExistsOrNull - which puts the map's copies wrapWidth (= 3 * wrapRadius) apart along wx
+            val mapParameters = game.tileMap.mapParameters
+            put("worldWrap", mapParameters.worldWrap)
+            if (mapParameters.worldWrap) {
+                val wrapRadius = if (mapParameters.shape == com.unciv.logic.map.MapShape.rectangular) mapParameters.mapSize.width / 2
+                    else mapParameters.mapSize.radius
+                put("wrapRadius", wrapRadius)
+                put("wrapWidth", 3 * wrapRadius)
+            }
             putJsonObject("game") {   // what game this is (v18), for the settings board
                 put("ruleset", game.gameParameters.baseRuleset)
                 putJsonArray("mods") { for (mod in game.gameParameters.mods) add(mod) }
